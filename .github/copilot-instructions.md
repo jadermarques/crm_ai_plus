@@ -1,34 +1,33 @@
-# CRM AI Plus - AI Coding Agent Instructions
+# CRM AI Plus - Instruções para o Agente de Código
 
-## Project Overview
-CRM AI Plus is a customer relationship management system with AI-powered chat responses, integrating Chatwoot for messaging. It uses FastAPI for backend webhooks, Streamlit for workspace UI, PostgreSQL for data, Redis for caching, ChromaDB for vector storage, and OpenAI for AI responses.
+## Visão geral do projeto
+- CRM com workspace em Streamlit, webhooks FastAPI para Chatwoot, Postgres como banco, Redis/Chroma/OpenAI para IA.
+- Frontend: `src/frontend/app.py` usa navegação por módulos, autenticação com usuários no Postgres (hash PBKDF2) e páginas em `src/frontend/views/`.
+- Backend: `src/backend/main.py` expõe webhooks; config/env via `src/core/config.py`; banco async via `src/core/database.py`.
 
-## Architecture
-- **Backend** (`src/backend/`): FastAPI app handling Chatwoot webhooks at `/api/v1/webhooks/chatwoot`. Processes incoming messages and sends AI-generated replies.
-- **Frontend** (`src/frontend/`): Streamlit app for workspace management, tests database connectivity on load.
-- **Core** (`src/core/`): Shared utilities - `config.py` for Pydantic settings from `.env`, `database.py` for async SQLAlchemy with PostgreSQL.
-- **Modules** (`src/modules/`): Extensible components, currently `common/` placeholder.
+## Convenções e padrões
+- Preferir `async/await` para banco/HTTP; sessões via `get_sessionmaker()` e engine via `get_engine()` (um por loop).
+- Configurações sempre por `get_settings()`; não hardcode segredos.
+- Importar com caminho absoluto `src.`.
+- Senhas: hash PBKDF2 (passlib) e mínimo de 6 caracteres.
+- Não reformatar arquivos não tocados; comentários só se necessário para clareza.
 
-Key data flows: Chatwoot webhook → FastAPI → AI processing (future) → Response back to Chatwoot.
+## Fluxos principais
+- Frontend: `streamlit run src/frontend/app.py` (requer `.env` e Postgres).
+- Backend: `python -m uvicorn src.backend.main:app --reload --port 8000`.
+- Criar/alterar usuário: `python -m src.scripts.create_user --username <user> [--update] [--password <senha>]`.
 
-## Key Workflows
-- **Run Backend**: `python -m uvicorn src.backend.main:app --reload --port 8000`
-- **Run Frontend**: `streamlit run src/frontend/app.py`
-- **Expose for Chatwoot**: Use ngrok `ngrok http 8000`, configure webhook URL `https://<ngrok-url>/api/v1/webhooks/chatwoot`
-- **Setup**: Create venv, install from `requirements.txt`, copy `.env.example` to `.env` with required vars (DATABASE_URL, etc.)
-
-## Conventions and Patterns
-- **Async Everywhere**: Use async/await for DB operations, HTTP calls. Example: `async with engine.connect() as conn:`
-- **Settings Management**: Use `get_settings()` from `src.core.config` for env vars, cached with `@lru_cache`.
-- **Database**: Async SQLAlchemy with `get_engine()` and `get_sessionmaker()` cached. Use `async with session_factory() as session:` for transactions.
-- **Imports**: Absolute imports from `src.`, e.g., `from src.core.database import get_engine`.
-- **Error Handling**: Log exceptions, return JSON responses with status codes in FastAPI routes.
-- **AI Integration**: Use Pydantic AI for structured AI responses, ChromaDB for vector similarity searches.
-
-## Examples
-- Add new webhook: Include router in `main.py` `app.include_router(new_router)`.
-- DB query: `async with get_sessionmaker()() as session: result = await session.execute(text("SELECT * FROM table"))`
-- HTTP client: `async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, 10.0)) as client: response = await client.post(url, json=data)`
-
-Reference: [README.md](README.md) for setup, [src/backend/api/webhooks.py](src/backend/api/webhooks.py) for Chatwoot integration.</content>
-<parameter name="filePath">/home/jader/projects/crm_ai_plus/.github/copilot-instructions.md
+## Regras para o agente
+- Ler estas instruções e `AGENTS.md` antes de editar.
+- Não apagar instruções nem alterar comportamento de auth/banco sem necessidade.
+- Manter português em mensagens exibidas ao usuário final.
+- Evitar mudanças em arquivos fora do escopo solicitado.
+- Ao adicionar nova lógica, preferir testes manuais simples (quando fizer sentido) e indicar no resumo.
+- Sempre planejar e/ou adicionar testes unitários para novas regras de negócio; use `pytest`/`pytest-asyncio` em `tests/`.
+- Se não for possível testar (ex.: UI pura), documentar o gap e sugerir testes manuais.
+- Para mudanças em UI/Streamlit, sugerir e/ou adicionar teste E2E (ex.: Playwright/Selenium) quando viável; se não implementar, registrar plano/manual no resumo.
+- Ao tocar fluxos de login/autenticação, atualizar ou criar testes cobrindo happy path e falhas (credenciais inválidas, usuário inexistente, senha mínima).
+- Testes E2E devem rodar em modo headless e serem opt-in via `RUN_E2E=1` para não quebrar CI local; ao adicionar, documente dependências (playwright) e passos de setup.
+- Inclua logs passo-a-passo nos testes (especialmente E2E) usando `logging` para facilitar depuração em tempo real (log_cli habilitado no pytest).
+- Todos os projetos devem criar logs de teste por módulo (ex.: handler para `logs/tests/<arquivo>.log`), além do `log_cli` no terminal.
+- Só execute testes se o usuário pedir explicitamente no prompt (ex.: terminar com “teste”/“faça testes”); caso contrário, planeje/descreva mas não execute. Se executar e falhar/for impossível, explique no resumo e liste como rodar.
