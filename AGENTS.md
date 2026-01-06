@@ -14,3 +14,4 @@
 - Inclua logs passo-a-passo nos testes (usar logging); pytest já está configurado com log_cli para exibir no terminal.
 - Configure logs por módulo de teste (ex.: `logs/tests/<arquivo>.log`) além da saída no terminal.
 - Só execute testes se o usuário solicitar explicitamente (ex.: “teste”, “faça testes” no pedido); caso contrário, apenas planeje/descreva. Se executar e falhar/for impossível, informe no resumo e como rodar.
+- Sidebar do Streamlit: preservar o estilo/estrutura (módulos expandíveis com subitens e ícones) e só modificar se o usuário pedir.

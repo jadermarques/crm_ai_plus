@@ -31,3 +31,4 @@
 - Inclua logs passo-a-passo nos testes (especialmente E2E) usando `logging` para facilitar depuração em tempo real (log_cli habilitado no pytest).
 - Todos os projetos devem criar logs de teste por módulo (ex.: handler para `logs/tests/<arquivo>.log`), além do `log_cli` no terminal.
 - Só execute testes se o usuário pedir explicitamente no prompt (ex.: terminar com “teste”/“faça testes”); caso contrário, planeje/descreva mas não execute. Se executar e falhar/for impossível, explique no resumo e liste como rodar.
+- Sidebar do Streamlit: manter o estilo/estrutura atual (módulos expandíveis com subitens) e ícones; só alterar se solicitado explicitamente.

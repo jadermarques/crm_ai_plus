@@ -13,6 +13,10 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.core.database import get_engine
 
+# Helper central para rodar corrotinas em contexto Streamlit
+def run_async(coro):
+    return asyncio.run(coro)
+
 
 async def ping_database() -> tuple[bool, str | None]:
     engine = None
