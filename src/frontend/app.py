@@ -10,13 +10,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.frontend.views import overview
-from src.core.auth import (
-    count_users,
-    create_user,
-    ensure_users_table,
-    verify_credentials,
+from src.frontend.services.auth_service import (
+    check_credentials,
+    create_first_user,
+    ensure_setup,
+    get_user_count,
 )
-from src.frontend.shared import run_async
 
 st.set_page_config(page_title="CRM AI Plus", layout="wide")
 
@@ -405,8 +404,8 @@ def render_placeholder(app_id: str) -> None:
 def render_login_flow() -> bool:
     """Returns True if authenticated."""
     # Ensure auth table exists
-    run_async(ensure_users_table())
-    user_count = run_async(count_users())
+    ensure_setup()
+    user_count = get_user_count()
 
     login_area = st.container()
     with login_area:
@@ -424,7 +423,7 @@ def render_login_flow() -> bool:
                         st.error("Informe um usuário válido.")
                     else:
                         try:
-                            run_async(create_user(username.strip(), password))
+                            create_first_user(username, password)
                             st.session_state.authenticated_user = username.strip()
                             st.session_state.active_app = "overview"
                             st.rerun()
@@ -436,9 +435,9 @@ def render_login_flow() -> bool:
                 password = st.text_input("Senha", type="password")
                 submitted = st.form_submit_button("Entrar")
                 if submitted:
-                    ok, user = run_async(verify_credentials(username.strip(), password))
+                    ok, user = check_credentials(username, password)
                     if ok:
-                        st.session_state.authenticated_user = user["username"]
+                        st.session_state.authenticated_user = user
                         st.session_state.active_app = "overview"
                         st.rerun()
                     st.error("Usuário ou senha inválidos.")
