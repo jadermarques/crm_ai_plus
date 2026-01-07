@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.frontend.views import overview, users
+from src.frontend.views import agents as agents_view
 from src.frontend.views import modules as modules_view
 from src.frontend.views import applications as applications_view
 from src.frontend.views import permissions as permissions_view
@@ -27,6 +28,8 @@ from src.frontend.views import chatwoot_params, chatwoot_connection
 
 st.set_page_config(page_title="CRM AI Plus", layout="wide")
 LOG_APP_METRICS = os.getenv("LOG_APP_METRICS", "").lower() in {"1", "true", "yes", "on"}
+AUTO_LOGIN_ENABLED = os.getenv("DEV_AUTO_LOGIN", "").lower() in {"1", "true", "yes", "on"}
+AUTO_LOGIN_USER = os.getenv("DEV_AUTO_LOGIN_USER", "").strip()
 _EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}(?:\.[^@\s]{2,})?$")
 
 # Estilo para botões da navegação na sidebar (parecendo links)
@@ -486,6 +489,10 @@ def main() -> None:
     if "authenticated_user" not in st.session_state:
         st.session_state.authenticated_user = None
 
+    if AUTO_LOGIN_ENABLED and not st.session_state.authenticated_user:
+        ensure_setup()
+        st.session_state.authenticated_user = AUTO_LOGIN_USER or "dev"
+
     if not st.session_state.authenticated_user:
         authed = render_login_flow()
         if not authed:
@@ -511,6 +518,8 @@ def main() -> None:
             overview.render()
         elif active == "users":
             users.render()
+        elif active == "agents":
+            agents_view.render()
         elif active == "modules":
             modules_view.render()
         elif active == "apps":
