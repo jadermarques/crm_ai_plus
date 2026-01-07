@@ -38,7 +38,7 @@ async def ping_database() -> tuple[bool, str | None]:
 def render_db_status() -> None:
     db_ok, db_error = asyncio.run(ping_database())
     if db_ok:
-        st.success("Banco de Dados: conectado", icon="✅")
+        return
     else:
         message = "Banco de Dados: falha ao conectar"
         if db_error:

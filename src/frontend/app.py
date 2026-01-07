@@ -16,6 +16,7 @@ from src.frontend.views import overview, users
 from src.frontend.views import modules as modules_view
 from src.frontend.views import applications as applications_view
 from src.frontend.views import permissions as permissions_view
+from src.frontend.views import ia_configs as ia_configs_view
 from src.frontend.services.auth_service import (
     check_credentials,
     create_first_user,
@@ -516,6 +517,8 @@ def main() -> None:
             applications_view.render()
         elif active == "permissions":
             permissions_view.render()
+        elif active == "ia_configs":
+            ia_configs_view.render()
         elif active == "chatwoot_params":
             chatwoot_params.render()
         elif active == "chatwoot_connection":
