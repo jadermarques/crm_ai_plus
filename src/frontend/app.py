@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+import re
 import sys
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -9,15 +12,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.frontend.views import overview
+from src.frontend.views import overview, users
+from src.frontend.views import modules as modules_view
+from src.frontend.views import applications as applications_view
+from src.frontend.views import permissions as permissions_view
 from src.frontend.services.auth_service import (
     check_credentials,
     create_first_user,
     ensure_setup,
     get_user_count,
 )
+from src.frontend.views import chatwoot_params, chatwoot_connection
 
 st.set_page_config(page_title="CRM AI Plus", layout="wide")
+LOG_APP_METRICS = os.getenv("LOG_APP_METRICS", "").lower() in {"1", "true", "yes", "on"}
+_EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}(?:\.[^@\s]{2,})?$")
 
 # Estilo para botões da navegação na sidebar (parecendo links)
 st.markdown(
@@ -154,6 +163,7 @@ MODULES = [
             {"id": "apps", "label": "Aplicações"},
             {"id": "permissions", "label": "Permissões"},
             {"id": "prompt_management", "label": "Gestão de Prompts"},
+            {"id": "chatwoot_params", "label": "Parâmetros Chatwoot"},
             {"id": "backup_logs", "label": "Backup/Logs"},
             {"id": "system_configs", "label": "Configurações do Sistema"},
         ],
@@ -325,6 +335,14 @@ PLACEHOLDER_CONTENT = {
             {"title": "Prompts", "body": "Lista com tags e versões (placeholder)."},
         ],
     },
+    "chatwoot_params": {
+        "desc": "Configuração de parâmetros do Chatwoot.",
+        "sections": [
+            {"title": "Credenciais", "body": "Base URL, account_id, tokens (somente leitura; editar via .env)."},
+            {"title": "Webhook", "body": "Status do webhook e URL configurada (placeholder)."},
+            {"title": "Teste de conexão", "body": "Em breve: botão para pingar Chatwoot e validar token."},
+        ],
+    },
     "backup_logs": {
         "desc": "Backup e logs do sistema.",
         "sections": [
@@ -413,17 +431,36 @@ def render_login_flow() -> bool:
         if user_count == 0:
             st.caption("Crie o primeiro usuário para acessar o workspace.")
             with st.form("create_first_user"):
-                username = st.text_input("Usuário")
+                username = st.text_input("Usuário (3 a 20 caracteres, será convertido para minúsculas)")
+                full_name = st.text_input("Nome completo")
+                email = st.text_input("E-mail")
                 password = st.text_input("Senha (mínimo 6 caracteres)", type="password")
+                confirm_password = st.text_input("Confirmar senha", type="password")
                 submitted = st.form_submit_button("Criar usuário e entrar")
                 if submitted:
-                    if len(password) < 6:
+                    normalized_username = username.strip().lower()
+                    if len(normalized_username) < 3 or len(normalized_username) > 20:
+                        st.error("Usuário deve ter entre 3 e 20 caracteres (minúsculas).")
+                    elif len(password) < 6:
                         st.error("A senha deve ter pelo menos 6 caracteres.")
-                    elif not username.strip():
+                    elif not normalized_username:
                         st.error("Informe um usuário válido.")
+                    elif not full_name.strip():
+                        st.error("Informe o nome completo.")
+                    elif not email.strip():
+                        st.error("Informe um e-mail válido.")
+                    elif not _EMAIL_REGEX.match(email.strip().lower()):
+                        st.error("Informe um e-mail válido.")
+                    elif password != confirm_password:
+                        st.error("As senhas não conferem.")
                     else:
                         try:
-                            create_first_user(username, password)
+                            create_first_user(
+                                username=normalized_username,
+                                password=password,
+                                full_name=full_name,
+                                email=email,
+                            )
                             st.session_state.authenticated_user = username.strip()
                             st.session_state.active_app = "overview"
                             st.rerun()
@@ -435,12 +472,12 @@ def render_login_flow() -> bool:
                 password = st.text_input("Senha", type="password")
                 submitted = st.form_submit_button("Entrar")
                 if submitted:
-                    ok, user = check_credentials(username, password)
+                    ok, user = check_credentials(username.strip().lower(), password)
                     if ok:
                         st.session_state.authenticated_user = user
                         st.session_state.active_app = "overview"
                         st.rerun()
-                    st.error("Usuário ou senha inválidos.")
+                    st.error("Usuário ou senha inválidos ou usuário desabilitado.")
     return False
 
 
@@ -466,10 +503,32 @@ def main() -> None:
         st.session_state.active_app = "overview"
 
     active = st.session_state.active_app
-    if active == "overview":
-        overview.render()
-    else:
-        render_placeholder(active)
+    label = APP_LABELS.get(active, active)
+    start = time.perf_counter()
+    try:
+        if active == "overview":
+            overview.render()
+        elif active == "users":
+            users.render()
+        elif active == "modules":
+            modules_view.render()
+        elif active == "apps":
+            applications_view.render()
+        elif active == "permissions":
+            permissions_view.render()
+        elif active == "chatwoot_params":
+            chatwoot_params.render()
+        elif active == "chatwoot_connection":
+            chatwoot_connection.render()
+        else:
+            render_placeholder(active)
+        if LOG_APP_METRICS:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[APP] Renderizou '{label}' em {elapsed_ms:.2f} ms")
+    except Exception as exc:
+        if LOG_APP_METRICS:
+            print(f"[APP] Erro ao renderizar '{label}': {exc}")
+        raise
 
 
 if __name__ == "__main__":

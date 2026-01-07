@@ -11,6 +11,9 @@
 - Importar com caminho absoluto `src.`.
 - Senhas: hash PBKDF2 (passlib) e mínimo de 6 caracteres.
 - Não reformatar arquivos não tocados; comentários só se necessário para clareza.
+- Usuário/login: usernames entre 3 e 20 caracteres, sempre em minúsculas (normalizar/validar na interface e backend).
+- Entradas de contato: valide e-mails (`xxx@dominio.xxx` / `xxx@dominio.ccc.cc`) e telefones (`(xx)nnnnnnnnn` ou `+xx(nnnnnnnnn)`, 7–12 dígitos) sempre que solicitar ou persistir esses campos.
+- Entradas de contato: valide e-mails (`xxx@dominio.xxx` / `xxx@dominio.ccc.cc`) e telefones (`(xx)nnnnnnnnn` ou `+xx(nnnnnnnnn)`, 7–12 dígitos) sempre que solicitar ou persistir esses campos.
 
 ## Fluxos principais
 - Frontend: `streamlit run src/frontend/app.py` (requer `.env` e Postgres).
@@ -20,6 +23,7 @@
 ## Regras para o agente
 - Ler estas instruções e `AGENTS.md` antes de editar.
 - Não apagar instruções nem alterar comportamento de auth/banco sem necessidade.
+- Todas as tabelas do banco devem ter `data_hora_inclusao` e `data_hora_alteracao` (`TIMESTAMPTZ`, defaults `now()`, trigger de atualização); use `ensure_audit_columns` ao criar novas tabelas.
 - Manter português em mensagens exibidas ao usuário final.
 - Evitar mudanças em arquivos fora do escopo solicitado.
 - Ao adicionar nova lógica, preferir testes manuais simples (quando fizer sentido) e indicar no resumo.

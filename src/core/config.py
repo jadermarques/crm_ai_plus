@@ -15,9 +15,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     REDIS_URL: str
     CHROMA_HOST: str
-    CHATWOOT_BASE_URL: str
-    CHATWOOT_ACCOUNT_ID: int
-    CHATWOOT_API_ACCESS_TOKEN: str
+    CHATWOOT_BASE_URL: str | None = None
+    CHATWOOT_ACCOUNT_ID: int | None = None
+    CHATWOOT_API_ACCESS_TOKEN: str | None = None
     CHATWOOT_ACCESS_TOKEN: str | None = None
     OPENAI_API_KEY: str
 

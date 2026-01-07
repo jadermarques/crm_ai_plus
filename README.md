@@ -12,7 +12,7 @@
    - `pip install -r requirements.txt`
 3) Configurar variáveis:
    - `cp .env.example .env`
-   - Preencher em `.env`: `DATABASE_URL`, `REDIS_URL`, `CHROMA_HOST`, `CHATWOOT_BASE_URL`, `CHATWOOT_ACCOUNT_ID`, `CHATWOOT_API_ACCESS_TOKEN`, `OPENAI_API_KEY`.
+   - Preencher em `.env`: `DATABASE_URL`, `REDIS_URL`, `CHROMA_HOST`, `OPENAI_API_KEY`.
 
 ## Executar backend (FastAPI)
 - `python -m uvicorn src.backend.main:app --reload --port 8000`
@@ -26,12 +26,13 @@
    - Título “CRM AI Plus - Workspace”.
    - Resultado do teste de conexão ao banco (`SELECT 1`): verde se OK, vermelho se falhar.
    - O app solicitará login; se não houver usuário cadastrado, crie o primeiro. Senha mínima de 6 caracteres.
+   - Para Chatwoot, cadastre os parâmetros em Gestão > Parâmetros Chatwoot (não usa mais variáveis de ambiente para Chatwoot).
 
 ## Criar/alterar usuário via CLI
 - Com o venv ativo:
-  - Criar: `python -m src.scripts.create_user --username admin`
+  - Criar: `python -m src.scripts.create_user --username admin --full-name "Admin" --email admin@example.com --role ADMIN`
   - Atualizar senha: `python -m src.scripts.create_user --username admin --update`
-  - Você será solicitado a digitar a senha (ou use `--password`). Senha mínima de 6 caracteres. Usa PBKDF2 para armazenar hash.
+  - Você será solicitado a digitar a senha (ou use `--password`). Informe também nome completo, e-mail e (opcional) tipo de usuário (ADMIN/USER). Senha mínima de 6 caracteres. Usa PBKDF2 para armazenar hash.
 
 ## Expor para Chatwoot (ngrok)
 - `ngrok http 8000`

@@ -4,6 +4,9 @@
 - Mantenha mensagens da interface em português e preserve a navegação por módulos no Streamlit.
 - Não altere configurações sensíveis (`.env`, credenciais) salvo pedido explícito.
 - Para banco/Postgres use helpers `get_engine`/`get_sessionmaker`; evite criar conexões manuais.
+- Todas as tabelas devem ter `data_hora_inclusao` e `data_hora_alteracao` (`TIMESTAMPTZ`, defaults `now()`, trigger de atualização); ao criar tabelas, use o helper `ensure_audit_columns`.
+- Valide e-mails (`xxx@dominio.xxx` / `xxx@dominio.ccc.cc`) e telefones (`(xx)nnnnnnnnn` ou `+xx(nnnnnnnnn)`, 7–12 dígitos) sempre que coletar/persistir esses campos.
+- Usernames: 3–20 caracteres, sempre minúsculos (normalizar e validar na interface e backend).
 - Senhas devem ter no mínimo 6 caracteres e ser armazenadas com hash PBKDF2 (passlib).
 - Evite refatorações amplas não solicitadas; foque no escopo do pedido.
 - Documente brevemente mudanças relevantes no resumo final.

@@ -8,25 +8,34 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 from src.core.config import get_settings
+from src.core.chatwoot_params import get_params as get_chatwoot_params, ensure_table as ensure_chatwoot_table
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 CHATWOOT_RESPONSE_MESSAGE = "Recebi sua mensagem!"
+
+async def _load_chatwoot_config() -> tuple[dict[str, Any] | None, str | None]:
+    await ensure_chatwoot_table()
+    params = await get_chatwoot_params()
+    if not params:
+        return None, "Parâmetros Chatwoot não encontrados."
+    base_url = (params.get("chatwoot_url") or "").rstrip("/")
+    token = params.get("chatwoot_api_token") or ""
+    account_id = params.get("chatwoot_account_id")
+    if not (base_url and token and account_id):
+        return None, "Parâmetros Chatwoot incompletos."
+    return {"base_url": base_url, "token": token, "account_id": account_id}, None
 
 
 async def send_message_to_chatwoot(
     *,
+    base_url: str,
+    token: str,
     account_id: int,
     conversation_id: int,
     message: str,
 ) -> tuple[bool, str]:
-    base_url = settings.CHATWOOT_BASE_URL.rstrip("/")
-    token = settings.chatwoot_token
-    if not token:
-        return False, "CHATWOOT_API_ACCESS_TOKEN ausente"
-
     url = (
         f"{base_url}/api/v1/accounts/"
         f"{account_id}/conversations/{conversation_id}/messages"
@@ -108,7 +117,15 @@ async def chatwoot_webhook(request: Request) -> JSONResponse:
     conversation = payload.get("conversation") or {}
     account = payload.get("account") or {}
     conversation_id = conversation.get("id") or payload.get("conversation_id")
-    account_id = account.get("id") or settings.CHATWOOT_ACCOUNT_ID
+    params, err = await _load_chatwoot_config()
+    if err:
+        logger.error("Chatwoot config inválida: %s", err)
+        return JSONResponse(
+            {"status": "error", "reason": "chatwoot_config", "detail": err},
+            status_code=status.HTTP_200_OK,
+        )
+
+    account_id = account.get("id") or params["account_id"]
     user_content = payload.get("content") or ""
 
     if not conversation_id:
@@ -133,6 +150,8 @@ async def chatwoot_webhook(request: Request) -> JSONResponse:
     )
 
     success, detail = await send_message_to_chatwoot(
+        base_url=params["base_url"],
+        token=params["token"],
         account_id=account_id,
         conversation_id=conversation_id,
         message=CHATWOOT_RESPONSE_MESSAGE,

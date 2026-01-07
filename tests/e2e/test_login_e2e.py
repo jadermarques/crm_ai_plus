@@ -63,7 +63,7 @@ def e2e_env(tmp_path_factory) -> dict[str, str]:
         async with sm() as session:
             await session.execute(sa.text("DELETE FROM users WHERE username = :u"), {"u": "admin"})
             await session.commit()
-        await create_user("admin", "secret1")
+        await create_user("admin", "secret1", full_name="Admin", email="admin@example.com", role="ADMIN")
 
     try:
         run_async(_seed())
@@ -127,7 +127,7 @@ def test_login_flow(page: Page, base_url: str) -> None:
     expect(page.get_by_text("CRM AI Plus - Login")).to_have_count(0)
     # Deve ver Visão Geral
     expect(page.get_by_role("heading", name="Visão Geral")).to_be_visible()
-    logger.info("Visão Geral visível")
+    logger.info("Visão Geral Visível")
 
     # Sidebar mostra usuário logado
     expect(page.get_by_text("admin")).to_be_visible()
