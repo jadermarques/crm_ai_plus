@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import os
 
 from sqlalchemy import (
     Boolean,
@@ -17,6 +18,9 @@ from sqlalchemy import (
     text,
 )
 
+from pydantic_ai import Agent
+
+from src.core.config import get_settings
 from src.core.database import get_engine, get_sessionmaker
 from src.core.db_schema import ensure_audit_columns
 
@@ -245,3 +249,125 @@ async def update_model(
         if result.rowcount == 0:
             raise ValueError("Modelo não encontrado.")
         await session.commit()
+
+
+async def delete_model(model_id: int) -> None:
+    await ensure_tables()
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        result = await session.execute(models.delete().where(models.c.id == model_id))
+        if result.rowcount == 0:
+            raise ValueError("Modelo não encontrado.")
+        await session.commit()
+
+
+def _detect_provider_kind(provider_name: str) -> str:
+    normalized = (provider_name or "").strip().lower()
+    if "openai" in normalized:
+        return "openai"
+    if "google" in normalized or "gemini" in normalized:
+        return "gemini"
+    if "vertex" in normalized:
+        return "vertex"
+    if "anthropic" in normalized:
+        return "anthropic"
+    if "groq" in normalized:
+        return "groq"
+    if "mistral" in normalized:
+        return "mistral"
+    if "cohere" in normalized:
+        return "cohere"
+    return "unknown"
+
+
+def _get_provider_api_key(provider_kind: str) -> tuple[str | None, str | None]:
+    settings = get_settings()
+    if provider_kind == "openai":
+        return settings.OPENAI_API_KEY, "OPENAI_API_KEY"
+    if provider_kind == "gemini":
+        api_key = settings.GOOGLE_API_KEY or settings.GEMINI_API_KEY or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        return api_key or None, "GOOGLE_API_KEY"
+    if provider_kind == "anthropic":
+        api_key = settings.ANTHROPIC_API_KEY or os.getenv("ANTHROPIC_API_KEY")
+        return api_key or None, "ANTHROPIC_API_KEY"
+    if provider_kind == "groq":
+        api_key = settings.GROQ_API_KEY or os.getenv("GROQ_API_KEY")
+        return api_key or None, "GROQ_API_KEY"
+    if provider_kind == "mistral":
+        api_key = settings.MISTRAL_API_KEY or os.getenv("MISTRAL_API_KEY")
+        return api_key or None, "MISTRAL_API_KEY"
+    if provider_kind == "cohere":
+        api_key = settings.COHERE_API_KEY or os.getenv("COHERE_API_KEY")
+        return api_key or None, "COHERE_API_KEY"
+    return None, None
+
+
+def get_provider_key_suffix(provider_name: str) -> tuple[str | None, str | None]:
+    provider_kind = _detect_provider_kind(provider_name)
+    api_key, env_name = _get_provider_api_key(provider_kind)
+    if not api_key:
+        return None, env_name
+    cleaned = api_key.strip()
+    if not cleaned:
+        return None, env_name
+    suffix = cleaned[-4:] if len(cleaned) > 4 else cleaned
+    return suffix, env_name
+
+
+async def test_model_connection(provider_name: str, model_name: str) -> tuple[bool, str]:
+    provider_kind = _detect_provider_kind(provider_name)
+    if provider_kind == "vertex":
+        return False, "Teste de Vertex AI requer credenciais do Google Cloud."
+    if provider_kind == "unknown":
+        return False, "Provedor sem teste automatico implementado."
+
+    api_key, env_name = _get_provider_api_key(provider_kind)
+    if not api_key:
+        env_display = env_name or "API_KEY"
+        return False, f"Defina {env_display} no .env para testar este provedor."
+
+    try:
+        if provider_kind == "openai":
+            from pydantic_ai.models.openai import OpenAIModel
+
+            model = OpenAIModel(model_name, api_key=api_key)
+        elif provider_kind == "gemini":
+            from pydantic_ai.models.gemini import GeminiModel
+
+            model = GeminiModel(model_name, api_key=api_key)
+        elif provider_kind == "anthropic":
+            from pydantic_ai.models.anthropic import AnthropicModel
+
+            model = AnthropicModel(model_name, api_key=api_key)
+        elif provider_kind == "groq":
+            from pydantic_ai.models.groq import GroqModel
+
+            model = GroqModel(model_name, api_key=api_key)
+        elif provider_kind == "mistral":
+            from pydantic_ai.models.mistral import MistralModel
+
+            model = MistralModel(model_name, api_key=api_key)
+        elif provider_kind == "cohere":
+            try:
+                from pydantic_ai.models.cohere import CohereModel
+            except ImportError as exc:
+                return False, f"Cohere nao disponivel neste ambiente: {exc}"
+
+            model = CohereModel(model_name, api_key=api_key)
+        else:
+            return False, "Provedor sem teste automatico implementado."
+    except Exception as exc:
+        return False, f"Falha ao preparar modelo: {exc}"
+
+    agent = Agent(model, result_type=str, defer_model_check=True)
+    try:
+        result = await agent.run(
+            "Teste de conexao.",
+            model_settings={"max_tokens": 8, "temperature": 0},
+        )
+    except Exception as exc:
+        return False, f"Falha ao conectar: {exc}"
+
+    if not (result.data or "").strip():
+        return False, "Conexao estabelecida, mas sem resposta valida."
+    return True, "Conexao realizada com sucesso."

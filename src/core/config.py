@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     CHATWOOT_API_ACCESS_TOKEN: str | None = None
     CHATWOOT_ACCESS_TOKEN: str | None = None
     OPENAI_API_KEY: str
+    GOOGLE_API_KEY: str | None = None
+    GEMINI_API_KEY: str | None = None
+    ANTHROPIC_API_KEY: str | None = None
+    GROQ_API_KEY: str | None = None
+    MISTRAL_API_KEY: str | None = None
+    COHERE_API_KEY: str | None = None
 
     @property
     def chatwoot_token(self) -> str:

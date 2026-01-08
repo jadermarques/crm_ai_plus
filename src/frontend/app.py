@@ -14,6 +14,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.frontend.views import overview, users
 from src.frontend.views import agents as agents_view
+from src.frontend.views import bots as bots_view
+from src.frontend.views import bot_tests as bot_tests_view
 from src.frontend.views import modules as modules_view
 from src.frontend.views import applications as applications_view
 from src.frontend.views import permissions as permissions_view
@@ -520,6 +522,10 @@ def main() -> None:
             users.render()
         elif active == "agents":
             agents_view.render()
+        elif active == "bots":
+            bots_view.render()
+        elif active == "bot_tests":
+            bot_tests_view.render()
         elif active == "modules":
             modules_view.render()
         elif active == "apps":

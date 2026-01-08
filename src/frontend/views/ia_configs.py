@@ -13,9 +13,12 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.core.ia_settings import (
     create_model,
     create_provider,
+    delete_model,
     ensure_tables,
+    get_provider_key_suffix,
     list_models,
     list_providers,
+    test_model_connection,
     update_model,
     update_provider,
 )
@@ -99,6 +102,8 @@ def _render_providers() -> None:
 def _render_models() -> None:
     if "ia_models_selected_id" not in st.session_state:
         st.session_state.ia_models_selected_id = None
+    if "ia_models_delete_id" not in st.session_state:
+        st.session_state.ia_models_delete_id = None
 
     providers_data = run_async(list_providers(include_inactive=False))
     models_data = run_async(list_models())
@@ -197,7 +202,7 @@ def _render_models() -> None:
             except Exception as exc:
                 st.error(f"Erro ao salvar modelo: {exc}")
 
-    st.caption("Selecione um modelo para editar ou crie um novo.")
+    st.caption("Cadastre, edite, exclua ou teste a conexao dos modelos.")
     if models_data:
         df = pd.DataFrame(models_data)[
             ["id", "provider_name", "name", "cost_input", "cost_output", "is_active"]
@@ -220,13 +225,73 @@ def _render_models() -> None:
             lambda v: _format_cost(float(v)) if v is not None else "-"
         )
         st.dataframe(df, use_container_width=True, hide_index=True)
-        select_label = st.selectbox(
-            "Selecionar modelo para edição",
-            ["-"] + df["Modelo"].tolist(),
-            index=0,
-        )
-        if select_label != "-":
-            selected_row = df[df["Modelo"] == select_label].iloc[0]
-            st.session_state.ia_models_selected_id = int(selected_row["ID"])
+        st.subheader("Modelos cadastrados")
+        header_cols = st.columns([2.4, 2.2, 1.4, 1.4, 1.2, 1.8])
+        header_cols[0].markdown("**Provedor**")
+        header_cols[1].markdown("**Modelo**")
+        header_cols[2].markdown("**Custo entrada**")
+        header_cols[3].markdown("**Custo saida**")
+        header_cols[4].markdown("**Status**")
+        header_cols[5].markdown("**Acoes**")
+
+        for model in models_data:
+            cols = st.columns([2.4, 2.2, 1.4, 1.4, 1.2, 1.8])
+            cols[0].write(model.get("provider_name") or "-")
+            cols[1].write(model.get("name") or "-")
+            cost_input = model.get("cost_input")
+            cost_output = model.get("cost_output")
+            cols[2].write(_format_cost(float(cost_input)) if cost_input is not None else "-")
+            cols[3].write(_format_cost(float(cost_output)) if cost_output is not None else "-")
+            status = "Ativo" if model.get("is_active") else "Inativo"
+            cols[4].write(status)
+            actions = cols[5]
+            edit_key = f"edit_model_{model['id']}"
+            delete_key = f"delete_model_{model['id']}"
+            test_key = f"test_model_{model['id']}"
+            if actions.button("Editar", key=edit_key, use_container_width=True):
+                st.session_state.ia_models_selected_id = model["id"]
+                st.rerun()
+            if actions.button("Excluir", key=delete_key, type="secondary", use_container_width=True):
+                st.session_state.ia_models_delete_id = model["id"]
+                st.rerun()
+            if actions.button("Testar", key=test_key, use_container_width=True):
+                provider_name = model.get("provider_name") or ""
+                suffix, env_name = get_provider_key_suffix(provider_name)
+                if suffix:
+                    env_label = env_name or "API_KEY"
+                    st.info(f"Chave carregada ({env_label}) termina com ****{suffix}.")
+                with st.spinner("Testando conexao com o modelo..."):
+                    ok, detail = run_async(
+                        test_model_connection(provider_name, model.get("name") or "")
+                    )
+                if ok:
+                    st.success(detail)
+                else:
+                    st.error(detail)
+
+        if st.session_state.ia_models_delete_id is not None:
+            model_to_delete = next(
+                (m for m in models_data if m["id"] == st.session_state.ia_models_delete_id),
+                None,
+            )
+            if model_to_delete is None:
+                st.session_state.ia_models_delete_id = None
+            else:
+                st.warning(
+                    "Confirma a exclusao do modelo "
+                    f"'{model_to_delete.get('name', '-')}'?"
+                )
+                confirm_cols = st.columns([1, 1])
+                if confirm_cols[0].button("Confirmar exclusao", use_container_width=True):
+                    try:
+                        run_async(delete_model(model_to_delete["id"]))
+                        st.success("Modelo excluido com sucesso.")
+                        st.session_state.ia_models_delete_id = None
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Erro ao excluir modelo: {exc}")
+                if confirm_cols[1].button("Cancelar", use_container_width=True):
+                    st.session_state.ia_models_delete_id = None
+                    st.rerun()
     else:
         st.info("Nenhum modelo cadastrado ainda.")

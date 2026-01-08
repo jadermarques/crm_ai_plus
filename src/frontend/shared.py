@@ -13,9 +13,29 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.core.database import get_engine
 
+_SESSION_LOOP_KEY = "crm_ai_plus_event_loop"
+_fallback_loop: asyncio.AbstractEventLoop | None = None
+
+def _get_or_create_loop() -> asyncio.AbstractEventLoop:
+    global _fallback_loop
+    try:
+        loop = st.session_state.get(_SESSION_LOOP_KEY)
+        if loop is None or loop.is_closed():
+            loop = asyncio.new_event_loop()
+            st.session_state[_SESSION_LOOP_KEY] = loop
+        return loop
+    except Exception:
+        if _fallback_loop is None or _fallback_loop.is_closed():
+            _fallback_loop = asyncio.new_event_loop()
+        return _fallback_loop
+
+
 # Helper central para rodar corrotinas em contexto Streamlit
 def run_async(coro):
-    return asyncio.run(coro)
+    loop = _get_or_create_loop()
+    if loop.is_running():
+        raise RuntimeError("run_async nao pode ser chamado com loop em execucao.")
+    return loop.run_until_complete(coro)
 
 
 async def ping_database() -> tuple[bool, str | None]:
@@ -36,7 +56,7 @@ async def ping_database() -> tuple[bool, str | None]:
 
 
 def render_db_status() -> None:
-    db_ok, db_error = asyncio.run(ping_database())
+    db_ok, db_error = run_async(ping_database())
     if db_ok:
         return
     else:

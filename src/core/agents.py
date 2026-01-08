@@ -17,6 +17,14 @@ from sqlalchemy import (
     text,
 )
 
+from src.core.agent_architecture import (
+    AGENT_DESCRIPTIONS,
+    AGENT_DISPLAY_NAMES,
+    AGENT_SYSTEM_PROMPTS,
+    DEFAULT_AGENT_ORDER,
+    AgentRole,
+    resolve_role_label,
+)
 from src.core.database import get_engine, get_sessionmaker
 from src.core.db_schema import ensure_audit_columns
 from src.core.rag_management import ensure_tables as ensure_rags_tables
@@ -34,6 +42,8 @@ agents = Table(
     Column("system_prompt", Text, nullable=False),
     Column("versao", Integer, nullable=False, server_default=text("1")),
     Column("ativo", Boolean, nullable=False, server_default=text("TRUE")),
+    Column("agente_orquestrador", Boolean, nullable=False, server_default=text("FALSE")),
+    Column("papel", String(50), nullable=True),
     Column("model", String(255), nullable=False),
     Column("rag_id", Integer, ForeignKey("rags.id"), nullable=True),
     Column("created_at", DateTime(timezone=True), server_default=func.now()),
@@ -73,6 +83,17 @@ def _normalize_model(value: str) -> str:
     return model
 
 
+def _normalize_role(value: str | AgentRole | None) -> str:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise ValueError("Informe o papel do agente.")
+    if isinstance(value, AgentRole):
+        return value.value
+    role = resolve_role_label(value)
+    if role is None:
+        raise ValueError("Papel do agente inválido.")
+    return role.value
+
+
 def _normalize_version(value: int | float | None) -> int:
     if value is None:
         return 1
@@ -95,13 +116,99 @@ async def ensure_tables() -> None:
         await conn.execute(
             text("ALTER TABLE agents ADD COLUMN IF NOT EXISTS versao INTEGER NOT NULL DEFAULT 1")
         )
+        await conn.execute(
+            text(
+                "ALTER TABLE agents ADD COLUMN IF NOT EXISTS agente_orquestrador "
+                "BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        await conn.execute(
+            text("ALTER TABLE agents ADD COLUMN IF NOT EXISTS papel VARCHAR(50)")
+        )
         await conn.execute(text("UPDATE agents SET versao = 1 WHERE versao IS NULL"))
+        await conn.execute(
+            text("UPDATE agents SET agente_orquestrador = FALSE WHERE agente_orquestrador IS NULL")
+        )
         await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_agents_pk ON agents (pk)"))
         await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_agents_name ON agents (lower(nome))"))
         await conn.execute(
             text("CREATE UNIQUE INDEX IF NOT EXISTS ux_agents_name_version ON agents (lower(nome), versao)")
         )
     await ensure_audit_columns("agents")
+    await _backfill_agent_roles()
+
+
+async def _backfill_agent_roles() -> None:
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        result = await session.execute(select(agents.c.id, agents.c.nome, agents.c.papel))
+        updates: list[dict[str, Any]] = []
+        for row in result.mappings().all():
+            if (row.get("papel") or "").strip():
+                continue
+            role = resolve_role_label(row.get("nome"))
+            if role is None:
+                continue
+            updates.append({"id": row["id"], "papel": role.value})
+
+        for update in updates:
+            await session.execute(
+                agents.update().where(agents.c.id == update["id"]).values(papel=update["papel"])
+            )
+        if updates:
+            await session.commit()
+
+
+async def ensure_default_agents(model_name: str | None) -> None:
+    await ensure_tables()
+    if not model_name:
+        return
+    model_value = _normalize_model(model_name)
+
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        result = await session.execute(select(agents.c.id, agents.c.nome, agents.c.papel))
+        rows = result.mappings().all()
+        existing_roles = {row["papel"] for row in rows if (row.get("papel") or "").strip()}
+        existing_names = {row["nome"].lower(): row for row in rows if row.get("nome")}
+
+        updates = 0
+        payloads = []
+        for role in DEFAULT_AGENT_ORDER:
+            if role.value in existing_roles:
+                continue
+            display_name = AGENT_DISPLAY_NAMES[role]
+            existing_row = existing_names.get(display_name.lower())
+            if existing_row and not (existing_row.get("papel") or "").strip():
+                await session.execute(
+                    agents.update()
+                    .where(agents.c.id == existing_row["id"])
+                    .values(papel=role.value)
+                )
+                existing_roles.add(role.value)
+                updates += 1
+                continue
+            if existing_row:
+                continue
+            payloads.append(
+                {
+                    "pk": uuid4().hex,
+                    "nome": _normalize_name(display_name),
+                    "descricao": (AGENT_DESCRIPTIONS.get(role) or "").strip() or None,
+                    "system_prompt": _normalize_prompt(AGENT_SYSTEM_PROMPTS[role]),
+                    "versao": 1,
+                    "ativo": True,
+                    "agente_orquestrador": role == AgentRole.TRIAGEM,
+                    "papel": role.value,
+                    "model": model_value,
+                    "rag_id": None,
+                }
+            )
+
+        if payloads:
+            await session.execute(agents.insert().values(payloads))
+        if payloads or updates:
+            await session.commit()
 
 
 async def list_agents(include_inactive: bool = True) -> list[dict[str, Any]]:
@@ -117,9 +224,12 @@ async def list_agents(include_inactive: bool = True) -> list[dict[str, Any]]:
                 agents.c.system_prompt,
                 agents.c.versao,
                 agents.c.ativo,
+                agents.c.agente_orquestrador,
+                agents.c.papel,
                 agents.c.model,
                 agents.c.rag_id,
                 rags.c.nome.label("rag_nome"),
+                rags.c.rag_id.label("rag_identificador"),
                 rags.c.provedor_rag.label("rag_provedor"),
             )
             .select_from(j)
@@ -156,6 +266,8 @@ async def create_agent(
     model: str,
     versao: int | float | None = None,
     ativo: bool = True,
+    agente_orquestrador: bool = False,
+    papel: str | AgentRole | None = None,
     rag_id: int | None = None,
 ) -> None:
     await ensure_tables()
@@ -163,6 +275,7 @@ async def create_agent(
     prompt_clean = _normalize_prompt(system_prompt)
     versao_clean = _normalize_version(versao)
     model_clean = _normalize_model(model)
+    papel_clean = _normalize_role(papel)
     pk_value = uuid4().hex
 
     sessionmaker = get_sessionmaker()
@@ -177,10 +290,23 @@ async def create_agent(
                 system_prompt=prompt_clean,
                 versao=versao_clean,
                 ativo=bool(ativo),
+                agente_orquestrador=bool(agente_orquestrador),
+                papel=papel_clean,
                 model=model_clean,
                 rag_id=rag_id,
             )
         )
+        await session.commit()
+
+
+async def delete_agent(agent_id: int) -> None:
+    await ensure_tables()
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        result = await session.execute(select(agents.c.id).where(agents.c.id == agent_id))
+        if result.first() is None:
+            raise ValueError("Agente não encontrado.")
+        await session.execute(agents.delete().where(agents.c.id == agent_id))
         await session.commit()
 
 
@@ -193,6 +319,8 @@ async def update_agent(
     model: str,
     versao: int | float | None,
     ativo: bool = True,
+    agente_orquestrador: bool = False,
+    papel: str | AgentRole | None = None,
     rag_id: int | None = None,
 ) -> None:
     await ensure_tables()
@@ -200,6 +328,7 @@ async def update_agent(
     prompt_clean = _normalize_prompt(system_prompt)
     versao_clean = _normalize_version(versao)
     model_clean = _normalize_model(model)
+    papel_clean = _normalize_role(papel)
 
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
@@ -222,6 +351,8 @@ async def update_agent(
                 system_prompt=prompt_clean,
                 versao=versao_clean,
                 ativo=bool(ativo),
+                agente_orquestrador=bool(agente_orquestrador),
+                papel=papel_clean,
                 model=model_clean,
                 rag_id=rag_id,
             )
