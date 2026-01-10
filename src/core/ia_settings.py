@@ -1,3 +1,30 @@
+"""
+IA Settings Module - AI Provider and Model Management.
+
+This module provides functions for managing AI providers (e.g., OpenAI, Google)
+and their associated models. Used to configure and test which AI models are
+available for use in the system.
+
+Tables:
+    ia_providers: AI provider configurations (OpenAI, Google, etc.)
+    ia_models: Available models per provider with cost information
+
+Functions:
+    ensure_tables: Create database tables if not exists
+    list_providers: List all AI providers
+    create_provider: Create a new provider
+    update_provider: Update a provider
+    list_models: List all models
+    create_model: Create a new model
+    update_model: Update a model
+    delete_model: Delete a model
+    test_model_connection: Test if model is reachable
+
+Example:
+    >>> from src.core.ia_settings import list_models, create_model
+    >>> models = await list_models()
+    >>> await create_model(provider_id=1, name="gpt-4o-mini")
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -23,6 +50,7 @@ from pydantic_ai import Agent
 from src.core.config import get_settings
 from src.core.database import get_engine, get_sessionmaker
 from src.core.db_schema import ensure_audit_columns
+
 
 metadata = MetaData()
 

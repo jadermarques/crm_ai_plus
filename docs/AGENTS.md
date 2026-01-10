@@ -18,3 +18,7 @@
 - Configure logs por módulo de teste (ex.: `logs/tests/<arquivo>.log`) além da saída no terminal.
 - Só execute testes se o usuário solicitar explicitamente (ex.: “teste”, “faça testes” no pedido); caso contrário, apenas planeje/descreva. Se executar e falhar/for impossível, informe no resumo e como rodar.
 - Sidebar do Streamlit: preservar o estilo/estrutura (módulos expandíveis com subitens e ícones) e só modificar se o usuário pedir.
+- **PEP 8**: O código deve seguir o padrão PEP 8 (imports, espaçamento, snake_case).
+- **Backend Patterns**: Use injeção de dependência de `session` (`AsyncSession`) em serviços/funções de banco para permitir "Unit of Work" e reutilização de transações.
+- **UI Config**: Evite strings hardcoded ou listas longas em `app.py`. Use arquivos de config em `src/frontend/config/`.
+- **Database Bulk**: Para operações de modificação em massa, prefira `executemany` ou queries otimizadas em vez de loops de `execute` individuais.
