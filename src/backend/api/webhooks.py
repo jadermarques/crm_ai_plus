@@ -420,8 +420,9 @@ async def chatwoot_meta_webhook(request: Request) -> JSONResponse:
              conversation_id = payload["id"]
         else:
              conversation_id = payload["conversation"]["id"]
-    except KeyError:
-        logger.warning("Payload incompleto (sem account/conversation id)")
+    except KeyError as e:
+        import json
+        logger.warning(f"Payload incompleto (missing {e}): {json.dumps(payload, default=str)}")
         return JSONResponse(
             {"status": "ignored", "reason": "missing_ids"},
             status_code=status.HTTP_200_OK,
@@ -430,56 +431,54 @@ async def chatwoot_meta_webhook(request: Request) -> JSONResponse:
     # Dados de Referral
     headline, source_id, referral_type = _extract_referral_data(payload, event)
 
-    # LÓGICA DE LOG EM ARQUIVO
-    should_log = False
-    if event == "conversation_created":
-        should_log = True
-    elif event == "message_created":
-        # Loga TODAS as mensagens (Ad ou Orgânico) conforme solicitado
-        should_log = True
-    elif event == "conversation_status_changed":
-        # Só loga se status mudou para 'open'
-        new_status = payload.get("status")
-        if new_status == "open":
-            should_log = True
+    # LÓGICA INTELIGENTE (Log + Atualização Chatwoot)
+    # 1. Verifica estado atual da conversa no payload
+    conversation_attrs = payload.get("conversation", {}).get("custom_attributes", {}) or {}
+    current_referral_type = conversation_attrs.get("ad_referral_type")
 
-    if should_log:
+    should_process = False
+
+    # Regra 1: Se for Ad -> SEMPRE processa (prioridade máxima, atualiza qualquer coisa anterior)
+    if referral_type == "ad":
+        should_process = True
+    
+    # Regra 2: Se for Orgânico -> SÓ processa se não tiver NENHUMA atribuição anterior
+    # Isso captura a "Primeira Mensagem" orgânica, mas ignora as seguintes (evita spam e overwrite)
+    elif referral_type == "organic":
+        if not current_referral_type:
+            should_process = True
+
+    # Regra 3 (Exceções): Eventos de Criação/Status processam para garantir registro
+    if event == "conversation_created" or (event == "conversation_status_changed" and payload.get("status") == "open"):
+        # Se for create/open, forçamos processamento para garantir que o estado inicial seja setado
+        # Mas mantemos a proteção: Se já tiver Ad gravado, não sobrescreve com organic
+        if referral_type == "organic" and current_referral_type == "ad":
+             should_process = False
+        else:
+             should_process = True
+
+    if should_process:
+        # LOG
         if referral_type == "ad":
             logger.info("Lead de anúncio (log): headline=%s", headline)
         _log_new_lead(payload, headline, referral_type, source_id)
 
-    # Carregar configuração para atualização
-    config, err = await _load_chatwoot_meta_config()
-    if err:
-        logger.warning("Configuração Chatwoot-Meta inválida: %s", err)
-        return JSONResponse(
-            {"status": "error", "reason": "config_error", "detail": err},
-            status_code=status.HTTP_200_OK,
-        )
-
-    # ATUALIZAÇÃO NO CHATWOOT
-    # Correção: Só atualizamos se for um Lead de Anúncio.
-    # Se for orgânico, NÃO fazemos nada para não sobrescrever dados anteriores
-    # (caso a conversa tenha começado por anúncio e o cliente mandou nova msg depois).
-    if referral_type == "ad":
-        success, detail = await update_chatwoot_conversation_attributes(
-            base_url=config["base_url"],
-            token=config["token"],
-            account_id=account_id,
-            conversation_id=conversation_id,
-            custom_attributes={
-                "ad_headline": headline,
-                "ad_source_id": source_id,
-                "ad_referral_type": referral_type,
-            },
-        )
-
-        if not success:
-            logger.error("Falha ao atualizar atributos %s: %s", conversation_id, detail)
-            return JSONResponse(
-                {"status": "error", "reason": "update_failed", "detail": detail},
-                status_code=status.HTTP_200_OK,
+        # ATUALIZAÇÃO NO CHATWOOT
+        config, err = await _load_chatwoot_meta_config()
+        if not err and config:
+            success, detail = await update_chatwoot_conversation_attributes(
+                base_url=config["base_url"],
+                token=config["token"],
+                account_id=account_id,
+                conversation_id=conversation_id,
+                custom_attributes={
+                    "ad_headline": headline,
+                    "ad_source_id": source_id,
+                    "ad_referral_type": referral_type,
+                },
             )
+            if not success:
+                 logger.error("Falha ao atualizar atributos %s: %s", conversation_id, detail)
     
     return JSONResponse(
         {
