@@ -3,6 +3,11 @@ __pycache__/
 *.swp
 *.swo
 *.log
+/logs/
+/logs
+/logs/debug_runs/
+/logs/debug_runs
+logs/debug_runs/
 
 # Envs
 .env
@@ -24,3 +29,5 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+

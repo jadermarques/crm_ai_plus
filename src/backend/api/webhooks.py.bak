@@ -1,0 +1,493 @@
+"""Endpoints de Webhook para integrações Chatwoot.
+
+Este módulo fornece endpoints FastAPI para receber e processar mensagens
+do Chatwoot. Inclui o webhook principal do Chatwoot e o webhook da
+integração Chatwoot-Meta para tratamento de referências de anúncios Meta.
+
+Attributes:
+    router: Instância APIRouter do FastAPI para endpoints de webhook.
+    logger: Instância de logger do módulo.
+    CHATWOOT_RESPONSE_MESSAGE: Mensagem de resposta padrão para webhooks.
+
+Routes:
+    POST /api/v1/webhooks/chatwoot: Webhook principal do Chatwoot.
+    POST /api/v1/webhooks/chatwoot-meta: Webhook da integração Chatwoot-Meta.
+
+Example:
+    O router é tipicamente incluído na aplicação FastAPI principal::
+
+        from src.backend.api.webhooks import router
+        app.include_router(router)
+"""
+from __future__ import annotations
+
+import logging
+import os
+from datetime import datetime
+from typing import Any
+
+import httpx
+from fastapi import APIRouter, Request, status
+from fastapi.responses import JSONResponse
+
+from src.core.config import get_settings
+from src.core.chatwoot_params import get_params as get_chatwoot_params, ensure_table as ensure_chatwoot_table
+from src.core.integration_chatwoot_meta import (
+    get_config as get_chatwoot_meta_config,
+    ensure_table as ensure_chatwoot_meta_table,
+)
+
+router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
+logger = logging.getLogger(__name__)
+
+# Configuração de logger específico para leads (Webhooks)
+leads_logger = logging.getLogger("webhook_leads")
+leads_logger.setLevel(logging.INFO)
+if not leads_logger.handlers:
+    os.makedirs("logs", exist_ok=True)
+    _leads_handler = logging.FileHandler("logs/webhook_leads.log")
+    _leads_handler.setFormatter(logging.Formatter('%(message)s'))  # Data/hora já será incluída manualmente na mensagem conforme pedido
+    leads_logger.addHandler(_leads_handler)
+
+CHATWOOT_RESPONSE_MESSAGE = "Recebi sua mensagem!"
+
+
+async def _load_chatwoot_config() -> tuple[dict[str, Any] | None, str | None]:
+    """Carrega configuração do Chatwoot do banco de dados.
+
+    Returns:
+        Uma tupla de (config_dict, mensagem_erro). Se bem-sucedido, config_dict
+        contém 'base_url', 'token' e 'account_id'. Se falhar, mensagem_erro
+        contém o motivo.
+    """
+    await ensure_chatwoot_table()
+    params = await get_chatwoot_params()
+    if not params:
+        return None, "Parâmetros Chatwoot não encontrados."
+    base_url = (params.get("chatwoot_url") or "").rstrip("/")
+    token = params.get("chatwoot_api_token") or ""
+    account_id = params.get("chatwoot_account_id")
+    if not (base_url and token and account_id):
+        return None, "Parâmetros Chatwoot incompletos."
+    return {"base_url": base_url, "token": token, "account_id": account_id}, None
+
+
+async def send_message_to_chatwoot(
+    *,
+    base_url: str,
+    token: str,
+    account_id: int,
+    conversation_id: int,
+    message: str,
+) -> tuple[bool, str]:
+    """Envia uma mensagem para uma conversa do Chatwoot.
+
+    Args:
+        base_url: URL base da API Chatwoot.
+        token: Token de acesso da API Chatwoot.
+        account_id: ID da conta Chatwoot.
+        conversation_id: ID da conversa de destino.
+        message: Conteúdo da mensagem a enviar.
+
+    Returns:
+        Uma tupla de (sucesso, detalhe). Se bem-sucedido, detalhe contém
+        preview da resposta. Se falhar, detalhe contém informação do erro.
+    """
+    url = (
+        f"{base_url}/api/v1/accounts/"
+        f"{account_id}/conversations/{conversation_id}/messages"
+    )
+
+    headers = {
+        "api_access_token": token,
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "content": message,
+        "message_type": "outgoing",
+        "private": False,
+        "content_type": "text",
+        "content_attributes": {},
+    }
+
+    timeout = httpx.Timeout(connect=5.0, read=10.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            response = await client.post(url, json=payload, headers=headers)
+            body_preview = response.text[:200]
+            if response.is_success:
+                logger.info(
+                    "Resposta Chatwoot enviada: status=%s conversation_id=%s body=%s",
+                    response.status_code,
+                    conversation_id,
+                    body_preview,
+                )
+                return True, body_preview
+            logger.warning(
+                "Falha ao enviar resposta Chatwoot: status=%s conversation_id=%s body=%s",
+                response.status_code,
+                conversation_id,
+                body_preview,
+            )
+            return False, body_preview
+        except httpx.HTTPError as exc:
+            logger.exception(
+                "Erro HTTP ao enviar resposta Chatwoot conversation_id=%s", conversation_id
+            )
+            return False, str(exc)
+
+
+@router.post("/chatwoot", status_code=status.HTTP_200_OK)
+async def chatwoot_webhook(request: Request) -> JSONResponse:
+    """Trata webhooks recebidos do Chatwoot.
+
+    Recebe eventos message_created do Chatwoot, valida o payload
+    e envia uma resposta automática de volta para a conversa.
+
+    Args:
+        request: Objeto Request do FastAPI contendo o payload do webhook.
+
+    Returns:
+        JSONResponse com status 'ok', 'ignored' ou 'error'.
+    """
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:
+        logger.exception("Payload inválido (JSON) recebido de Chatwoot")
+        return JSONResponse(
+            {"status": "ignored", "reason": "invalid_json"},
+            status_code=status.HTTP_200_OK,
+        )
+
+    event_type = payload.get("event")
+    if event_type != "message_created":
+        logger.info("Ignorado evento não suportado: %s", event_type)
+        return JSONResponse(
+            {"status": "ignored", "reason": "event_type"}, status_code=status.HTTP_200_OK
+        )
+
+    sender = payload.get("sender") or {}
+    sender_type = sender.get("type")
+    message_type = payload.get("message_type")
+    is_private = bool(payload.get("private"))
+    if sender_type != "contact" or message_type != "incoming" or is_private:
+        logger.info(
+            "Ignorado por prevenção de loop: sender_type=%s message_type=%s private=%s",
+            sender_type,
+            message_type,
+            is_private,
+        )
+        return JSONResponse(
+            {"status": "ignored", "reason": "sender_direction_or_private"},
+            status_code=status.HTTP_200_OK,
+        )
+
+    conversation = payload.get("conversation") or {}
+    account = payload.get("account") or {}
+    conversation_id = conversation.get("id") or payload.get("conversation_id")
+    params, err = await _load_chatwoot_config()
+    if err:
+        logger.error("Chatwoot config inválida: %s", err)
+        return JSONResponse(
+            {"status": "error", "reason": "chatwoot_config", "detail": err},
+            status_code=status.HTTP_200_OK,
+        )
+
+    account_id = account.get("id") or params["account_id"]
+    user_content = payload.get("content") or ""
+
+    if not conversation_id:
+        logger.error("Webhook sem conversation_id; payload incompleto")
+        return JSONResponse(
+            {"status": "error", "reason": "missing_conversation_id"},
+            status_code=status.HTTP_200_OK,
+        )
+
+    if not account_id:
+        logger.error("Webhook sem account_id e sem fallback em configuração")
+        return JSONResponse(
+            {"status": "error", "reason": "missing_account_id"},
+            status_code=status.HTTP_200_OK,
+        )
+
+    logger.info(
+        "Mensagem recebida do cliente: conversation_id=%s account_id=%s content=%s",
+        conversation_id,
+        account_id,
+        user_content,
+    )
+
+    success, detail = await send_message_to_chatwoot(
+        base_url=params["base_url"],
+        token=params["token"],
+        account_id=account_id,
+        conversation_id=conversation_id,
+        message=CHATWOOT_RESPONSE_MESSAGE,
+    )
+
+    if not success:
+        logger.error(
+            "Falha ao responder conversa %s: %s", conversation_id, detail
+        )
+        return JSONResponse(
+            {"status": "error", "reason": "send_failed", "detail": detail},
+            status_code=status.HTTP_200_OK,
+        )
+
+    return JSONResponse(
+        {"status": "ok", "conversation_id": conversation_id},
+        status_code=status.HTTP_200_OK,
+    )
+
+
+# --- Chatwoot-Meta Integration Webhook ---
+
+async def _load_chatwoot_meta_config() -> tuple[dict[str, Any] | None, str | None]:
+    """Carrega configuração da integração Chatwoot-Meta do banco de dados.
+
+    Returns:
+        Uma tupla de (config_dict, mensagem_erro). Se bem-sucedido, config_dict
+        contém 'base_url' e 'token'. Se falhar ou inativa, mensagem_erro
+        contém o motivo.
+    """
+    await ensure_chatwoot_meta_table()
+    config = await get_chatwoot_meta_config()
+    if not config:
+        return None, "Configuração da integração Chatwoot-Meta não encontrada."
+    if not config.get("is_active"):
+        return None, "Integração Chatwoot-Meta está desativada."
+    base_url = (config.get("chatwoot_base_url") or "").rstrip("/")
+    token = config.get("chatwoot_api_token") or ""
+    if not (base_url and token):
+        return None, "Configuração da integração Chatwoot-Meta incompleta."
+    return {"base_url": base_url, "token": token}, None
+
+
+async def update_chatwoot_conversation_attributes(
+    *,
+    base_url: str,
+    token: str,
+    account_id: int,
+    conversation_id: int,
+    custom_attributes: dict[str, Any],
+) -> tuple[bool, str]:
+    """Atualiza atributos customizados de uma conversa do Chatwoot.
+
+    Args:
+        base_url: URL base da API Chatwoot.
+        token: Token de acesso da API Chatwoot.
+        account_id: ID da conta Chatwoot.
+        conversation_id: ID da conversa de destino.
+        custom_attributes: Dicionário de atributos customizados a definir.
+
+    Returns:
+        Uma tupla de (sucesso, detalhe). Se bem-sucedido, detalhe contém
+        preview da resposta. Se falhar, detalhe contém informação do erro.
+    """
+    url = f"{base_url}/api/v1/accounts/{account_id}/conversations/{conversation_id}/custom_attributes"
+    headers = {
+        "api_access_token": token,
+        "Content-Type": "application/json",
+    }
+    body = {"custom_attributes": custom_attributes}
+    
+    logger.info("Atualizando atributos Chatwoot: url=%s data=%s", url, custom_attributes)
+    
+    timeout = httpx.Timeout(15.0, connect=5.0, read=10.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            response = await client.post(url, json=body, headers=headers)
+            body_preview = response.text[:200]
+            if response.is_success:
+                logger.info("Atributos Chatwoot atualizados: status=%s", response.status_code)
+                return True, body_preview
+            logger.warning(
+                "Falha ao atualizar atributos Chatwoot: status=%s body=%s",
+                response.status_code,
+                body_preview,
+            )
+            return False, body_preview
+        except httpx.HTTPError as exc:
+            logger.exception("Erro HTTP ao atualizar Chatwoot conversation_id=%s", conversation_id)
+            return False, str(exc)
+
+
+def _extract_referral_data(payload: dict[str, Any], event: str) -> tuple[str, str, str]:
+    """Extrai informações de referência do payload."""
+    content_attributes = payload.get("content_attributes", {})
+    
+    # Se for conversation_created/status_changed e não tiver content_attributes no root,
+    # verificamos se veio lista de mensagens
+    if event in ("conversation_created", "conversation_status_changed") and not content_attributes:
+        messages = payload.get("messages", [])
+        if messages:
+            content_attributes = messages[0].get("content_attributes", {})
+
+    transport_meta = content_attributes.get("transport_metadata", {})
+    referral = transport_meta.get("referral") or content_attributes.get("referral")
+
+    if referral and referral.get("source_type") == "ad":
+        return (
+            referral.get("headline", "Anúncio sem título"),
+            referral.get("source_id", "N/A"),
+            "ad"
+        )
+    return "Orgânico / Direto", "N/A", "organic"
+
+
+def _log_new_lead(
+    payload: dict[str, Any],
+    headline: str,
+    referral_type: str,
+    source_id: str
+) -> None:
+    """Registra informações do lead no log dedicado."""
+    # Tenta extrair sender de meta, root ou messages
+    sender = payload.get("sender")
+    if not sender and "meta" in payload:
+        sender = payload["meta"].get("sender")
+    
+    if not sender:
+        messages = payload.get("messages", [])
+        if messages:
+            sender = messages[0].get("sender", {})
+    
+    sender = sender or {}
+    phone_number = sender.get("phone_number", "N/A")
+    contact_name = sender.get("name", "N/A")
+    
+    # Tenta extrair inbox de inbox, meta ou root
+    inbox = payload.get("inbox")
+    if not inbox and "meta" in payload:
+        inbox = payload["meta"].get("inbox")
+    
+    inbox = inbox or {}
+    inbox_name = inbox.get("name", "N/A")
+    
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_message = (
+        f"Data/Hora: {current_time} | "
+        f"WhatsApp: {phone_number} | "
+        f"Nome: {contact_name} | "
+        f"Inbox: {inbox_name} | "
+        f"Ad Headline: {headline} | "
+        f"Ad Referral Type: {referral_type} | "
+        f"Ad Source ID: {source_id}"
+    )
+    leads_logger.info(log_message)
+
+
+@router.post("/chatwoot-meta", status_code=status.HTTP_200_OK)
+async def chatwoot_meta_webhook(request: Request) -> JSONResponse:
+    """Trata webhooks da integração Chatwoot-Meta.
+    
+    Recebe eventos message_created e conversation_created/status_changed para logar leads
+    e atualizar atributos de referrals.
+    """
+    try:
+        payload: dict[str, Any] = await request.json()
+    except Exception:
+        logger.exception("Payload inválido (JSON) recebido no webhook Chatwoot-Meta")
+        return JSONResponse(
+            {"status": "ignored", "reason": "invalid_json"},
+            status_code=status.HTTP_200_OK,
+        )
+
+    event = payload.get("event")
+    msg_type = payload.get("message_type")
+
+    # Validação de Evento
+    # Logamos em conversation_created e conversation_status_changed (se status -> open)
+    MONITORED_EVENTS = ("message_created", "conversation_created", "conversation_status_changed")
+    if event not in MONITORED_EVENTS:
+        logger.debug("Ignorando evento não monitorado: event=%s", event)
+        return JSONResponse(
+            {"status": "ignored", "reason": "event_type"},
+            status_code=status.HTTP_200_OK,
+        )
+
+    if event == "message_created" and msg_type != "incoming":
+        return JSONResponse(
+            {"status": "ignored", "reason": "direction"},
+            status_code=status.HTTP_200_OK,
+        )
+
+    # Identificação da Conversa
+    try:
+        account_id = payload["account"]["id"]
+        # conversation events ten 'id' no root, message_created tem dentro de 'conversation'
+        if event in ("conversation_created", "conversation_status_changed"):
+             conversation_id = payload["id"]
+        else:
+             conversation_id = payload["conversation"]["id"]
+    except KeyError:
+        logger.warning("Payload incompleto (sem account/conversation id)")
+        return JSONResponse(
+            {"status": "ignored", "reason": "missing_ids"},
+            status_code=status.HTTP_200_OK,
+        )
+
+    # DEBUG: Log raw payload to file to inspect what is actually arriving
+    try:
+        with open("logs/webhook_payloads.jsonl", "a") as f:
+            import json
+            f.write(json.dumps(payload, default=str) + "\n")
+    except Exception as e:
+        logger.error(f"Failed to log raw payload: {e}")
+
+    # Dados de Referral
+    headline, source_id, referral_type = _extract_referral_data(payload, event)
+
+    # LÓGICA DE LOG EM ARQUIVO
+    should_log = False
+    if event == "conversation_created":
+        should_log = True
+    elif event == "conversation_status_changed":
+        # Só loga se status mudou para 'open'
+        new_status = payload.get("status")
+        if new_status == "open":
+            should_log = True
+
+    if should_log:
+        if referral_type == "ad":
+            logger.info("Lead de anúncio (log): headline=%s", headline)
+        _log_new_lead(payload, headline, referral_type, source_id)
+
+    # Carregar configuração para atualização
+    config, err = await _load_chatwoot_meta_config()
+    if err:
+        logger.warning("Configuração Chatwoot-Meta inválida: %s", err)
+        return JSONResponse(
+            {"status": "error", "reason": "config_error", "detail": err},
+            status_code=status.HTTP_200_OK,
+        )
+
+    # Atualizar atributos no Chatwoot
+    success, detail = await update_chatwoot_conversation_attributes(
+        base_url=config["base_url"],
+        token=config["token"],
+        account_id=account_id,
+        conversation_id=conversation_id,
+        custom_attributes={
+            "ad_headline": headline,
+            "ad_source_id": source_id,
+            "ad_referral_type": referral_type,
+        },
+    )
+
+    if not success:
+        logger.error("Falha ao atualizar atributos %s: %s", conversation_id, detail)
+        return JSONResponse(
+            {"status": "error", "reason": "update_failed", "detail": detail},
+            status_code=status.HTTP_200_OK,
+        )
+
+    return JSONResponse(
+        {
+            "status": "ok",
+            "conversation_id": conversation_id,
+            "referral_type": referral_type,
+            "event_processed": event
+        },
+        status_code=status.HTTP_200_OK,
+    )

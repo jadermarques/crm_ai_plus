@@ -24,6 +24,24 @@ from src.core.bots import (
 from src.frontend.shared import page_header, render_db_status, run_async
 
 
+
+DEFAULT_BOT_PERSONA = """PAPEL:
+Você é o [Nome do Bot], atendente virtual oficial da [Empresa].
+
+PERSONALIDADE:
+- Tom: Cordial, direto e prestativo.
+- Identidade: Agente de IA, empático e descontraído.
+- Tamanho das respostas: Sempre responda de forma objetiva e curta, só detalhe na saudação inicial.
+- Pode usar emojis quando achar necessário.
+
+REGRAS DE INTERAÇÃO GERAIS:
+- Use apenas informações disponíveis na base de conhecimento ou contexto.
+- Não invente informações técnicas, preços ou outros dados.
+- Se receber ofensa ou linguagem inadequada, responda educadamente e ironicamente, finalize a conversa.
+- Se perceber brincadeiras não ofensivas, responda de forma leve e inteligente.
+- Não faça piadas fora do contexto."""
+
+
 def render() -> None:
     page_header("Bots", "Cadastre bots e vincule os agentes usados no atendimento.")
     render_db_status()
@@ -129,6 +147,13 @@ def _render_bot_form(
         )
         ativo = st.checkbox("Ativo", value=selected.get("ativo", True) if is_edit else True)
 
+        persona = st.text_area(
+            "Persona / Instruções Globais",
+            value=selected.get("persona", "") if is_edit else DEFAULT_BOT_PERSONA,
+            height=200,
+            help="Texto injetado no inicio do prompt de TODOS os agentes deste bot. Defina a personalidade e regras gerais aqui.",
+        )
+
         default_orchestrator_index = 0
         if selected_orchestrator is not None:
             for idx, label in enumerate(orchestrator_labels):
@@ -165,6 +190,44 @@ def _render_bot_form(
             st.error("Selecione um agente orquestrador.")
             return
 
+        # Validation: Unique roles (except Client)
+        agents_by_id_map = {a["id"]: a for a in agents_data}
+        role_counts: dict[str, list[str]] = {}
+        
+        # Include orchestrator in validation if it's also linked (replace_bot_agents logic adds orchestrator if not present? 
+        # Usually orchestrator IS one of the linked agents.
+        # But selected_agent_ids_input comes from checkboxes. 
+        # Logic matches checkboxes. logic in replace_bot_agents sets orchestrator separate from links? 
+        # Let's check replace_bot_agents. It takes (bot_id, agent_ids, orchestrator_id).
+        # Assuming all active agents relevant to the bot should be validated.
+        
+        # Combine selected agents and orchestrator for validation
+        all_ids_to_check = set(selected_agent_ids_input)
+        all_ids_to_check.add(orchestrator_id)
+        
+        from src.core.agent_architecture import AgentRole, resolve_role_label
+
+        for aid in all_ids_to_check:
+            agent_obj = agents_by_id_map.get(aid)
+            if not agent_obj:
+                continue
+            
+            # Resolve role
+            raw_role = agent_obj.get("papel")
+            role_enum = resolve_role_label(raw_role)
+            
+            # Skip if client or unknown
+            if not role_enum or role_enum == AgentRole.CLIENTE_SIMULADO_PADRAO:
+                 continue
+                 
+            # Check duplication
+            role_key = role_enum.value
+            if role_key in role_counts:
+                 existing_name = role_counts[role_key][0]
+                 st.error(f"Conflito de Papel: O papel '{role_key}' ja esta sendo usado pelo agente '{existing_name}'. Nao e permitido repetir papéis (exceto Cliente).")
+                 return
+            role_counts[role_key] = [agent_obj.get("nome", "?")]
+
         if is_edit:
             run_async(
                 update_bot(
@@ -173,6 +236,7 @@ def _render_bot_form(
                     descricao=descricao,
                     versao=versao,
                     ativo=ativo,
+                    persona=persona,
                 )
             )
             bot_id = selected["id"]
@@ -183,6 +247,7 @@ def _render_bot_form(
                     descricao=descricao,
                     versao=versao,
                     ativo=ativo,
+                    persona=persona,
                 )
             )
         run_async(replace_bot_agents(bot_id, selected_agent_ids_input, orchestrator_id))

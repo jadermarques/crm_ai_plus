@@ -1,3 +1,28 @@
+"""
+Bots Module - Bot and Bot-Agent Relationship Management.
+
+This module provides functions for managing bots and their associated agents
+in the database. A bot is a configured AI assistant that uses multiple
+specialized agents for handling different types of requests.
+
+Tables:
+    bots: Bot configuration (name, description, persona, version)
+    bot_agents: Many-to-many relationship between bots and agents
+
+Functions:
+    ensure_tables: Create database tables if not exists
+    list_bots: List all bots
+    create_bot: Create a new bot
+    update_bot: Update an existing bot
+    delete_bot: Delete a bot
+    replace_bot_agents: Replace all agents linked to a bot
+    list_bot_agents: List agents linked to a bot
+
+Example:
+    >>> from src.core.bots import create_bot, replace_bot_agents
+    >>> bot_id = await create_bot(nome="Meu Bot", descricao="Bot de teste")
+    >>> await replace_bot_agents(bot_id, agent_ids=[1, 2, 3], orchestrator_agent_id=1)
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -34,6 +59,7 @@ bots = Table(
     Column("descricao", Text, nullable=True),
     Column("versao", Integer, nullable=False, server_default=text("1")),
     Column("ativo", Boolean, nullable=False, server_default=text("TRUE")),
+    Column("persona", Text, nullable=True),
     Column("created_at", DateTime(timezone=True), server_default=func.now()),
     Column("data_hora_inclusao", DateTime(timezone=True), server_default=func.now(), nullable=False),
     Column(
@@ -152,6 +178,7 @@ async def _ensure_bot_exists(session, bot_id: int) -> None:
 async def _ensure_agents_exist(session, agent_ids: list[int]) -> None:
     if not agent_ids:
         return
+    # This function still uses Core-style query for agents_table, needs to be updated to ORM if desired
     result = await session.execute(
         select(agents_table.c.id).where(agents_table.c.id.in_(agent_ids))
     )
@@ -167,6 +194,7 @@ async def create_bot(
     descricao: str | None,
     versao: int | float | None = None,
     ativo: bool = True,
+    persona: str | None = None,
 ) -> int:
     await ensure_tables()
     nome_clean = _normalize_name(nome)
@@ -174,54 +202,74 @@ async def create_bot(
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         await _ensure_unique_name(session, nome_clean)
+        pk = uuid4().hex
         await session.execute(
             bots.insert().values(
-                pk=uuid4().hex,
+                pk=pk,
                 nome=nome_clean,
                 descricao=(descricao or "").strip() or None,
                 versao=versao_clean,
                 ativo=bool(ativo),
+                persona=persona,
             )
         )
         await session.commit()
-        result = await session.execute(select(bots.c.id).where(func.lower(bots.c.nome) == nome_clean.lower()))
+        result = await session.execute(
+            select(bots.c.id).where(bots.c.pk == pk)
+        )
         return int(result.scalar_one())
 
 
 async def update_bot(
     bot_id: int,
     *,
-    nome: str,
-    descricao: str | None,
-    versao: int | float | None,
-    ativo: bool = True,
+    nome: str | None = None,
+    descricao: str | None = None,
+    versao: int | float | None = None,
+    ativo: bool | None = None,
+    persona: str | None = None,
 ) -> None:
     await ensure_tables()
-    nome_clean = _normalize_name(nome)
-    versao_clean = _normalize_version(versao)
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        current_version_result = await session.execute(
-            select(bots.c.versao).where(bots.c.id == bot_id)
+        current_bot = await session.execute(
+            select(bots.c.versao, bots.c.nome).where(bots.c.id == bot_id)
         )
-        current_version = current_version_result.scalar_one_or_none()
-        if current_version is None:
-            raise ValueError("Bot nao encontrado.")
-        if versao_clean <= current_version:
-            raise ValueError(f"A versao deve ser maior que a atual ({current_version}).")
-        await _ensure_unique_name(session, nome_clean, ignore_id=bot_id)
-        result = await session.execute(
-            bots.update()
-            .where(bots.c.id == bot_id)
-            .values(
-                nome=nome_clean,
-                descricao=(descricao or "").strip() or None,
-                versao=versao_clean,
-                ativo=bool(ativo),
-            )
+        bot_row = current_bot.first()
+        if not bot_row:
+            raise ValueError(f"Bot {bot_id} nao encontrado.")
+        
+        current_version = bot_row.versao
+        current_name = bot_row.nome
+        
+        values = {}
+        if nome is not None:
+            nome_clean = _normalize_name(nome)
+            if nome_clean.lower() != current_name.lower():
+                await _ensure_unique_name(session, nome_clean, ignore_id=bot_id)
+            values["nome"] = nome_clean
+            
+        if descricao is not None:
+            values["descricao"] = (descricao or "").strip() or None
+            
+        if versao is not None:
+            versao_clean = _normalize_version(versao)
+            if versao_clean <= current_version:
+                 raise ValueError(f"A versao deve ser maior que a atual ({current_version}).")
+            values["versao"] = versao_clean
+            
+        if ativo is not None:
+            values["ativo"] = bool(ativo)
+            
+        if persona is not None:
+            values["persona"] = persona
+            
+        if not values:
+            return
+
+        await session.execute(
+            bots.update().where(bots.c.id == bot_id).values(**values)
         )
-        if result.rowcount == 0:
-            raise ValueError("Bot nao encontrado.")
         await session.commit()
 
 

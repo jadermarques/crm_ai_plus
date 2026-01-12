@@ -1,3 +1,30 @@
+"""
+RAG Management Module - RAG Collection CRUD Operations.
+
+This module provides functions for managing Retrieval Augmented Generation (RAG)
+collections in the database. RAG collections are used to store and retrieve
+contextual information for AI agents.
+
+Providers:
+    RAG_OPENAI: OpenAI Assistants API with file search
+    RAG_CHROMADB: Self-hosted ChromaDB vector database
+
+Functions:
+    ensure_tables: Create database tables if not exists
+    list_rags: List all RAG collections
+    create_rag: Create a new RAG collection
+    update_rag: Update an existing RAG collection
+    delete_rag: Delete a RAG collection
+    get_rag_by_id: Get RAG collection by database ID
+
+Example:
+    >>> from src.core.rag_management import create_rag, RAG_PROVIDER_CHROMADB
+    >>> rag = await create_rag(
+    ...     nome="Base de Conhecimento",
+    ...     rag_id="knowledge-base",
+    ...     provedor_rag=RAG_PROVIDER_CHROMADB
+    ... )
+"""
 from __future__ import annotations
 
 from typing import Any

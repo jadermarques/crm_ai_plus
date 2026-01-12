@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.core.database import get_engine
+from src.core.debug_logger import create_log_session
 
 _SESSION_LOOP_KEY = "crm_ai_plus_event_loop"
 _fallback_loop: asyncio.AbstractEventLoop | None = None
@@ -34,7 +35,18 @@ def _get_or_create_loop() -> asyncio.AbstractEventLoop:
 def run_async(coro):
     loop = _get_or_create_loop()
     if loop.is_running():
-        raise RuntimeError("run_async nao pode ser chamado com loop em execucao.")
+        # Fallback: se o loop principal estiver ocupado/rodando,
+        # cria um loop temporário isolado para executar esta corrotina.
+        # WARNING: Se a corrotina depender de asyncio.get_running_loop(), isso vai falhar.
+        # Idealmente usamos nest_asyncio.
+        import asyncio
+        temp_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(temp_loop)
+        try:
+            return temp_loop.run_until_complete(coro)
+        finally:
+            temp_loop.close()
+            asyncio.set_event_loop(loop) # Restore original
     return loop.run_until_complete(coro)
 
 
@@ -70,3 +82,39 @@ def page_header(title: str, subtitle: str | None = None) -> None:
     st.title(title)
     if subtitle:
         st.caption(subtitle)
+
+
+def render_debug_panel(key_suffix: str = "global", location: str = "bottom") -> Path | None:
+    """
+    Renders a standardized Debug Panel.
+    Args:
+        key_suffix: Unique suffix for widget keys.
+        location: layout hint (unused for now, simplifies to bottom container).
+    Returns:
+        Path to log file if enabled, None otherwise.
+        
+    Usage:
+        log_path = render_debug_panel("my_view")
+    """
+    st.divider()
+    with st.expander("🛠 Configurações e Logs de Debug", expanded=False):
+        c1, c2 = st.columns([1, 3])
+        enable_full_debug = c1.checkbox(
+            "Log debug completo", 
+            value=False, 
+            key=f"full_debug_{key_suffix}", 
+            help="Salva logs detalhados em logs/debug_runs/"
+        )
+        
+        path_key = f"debug_log_path_{key_suffix}"
+        
+        if enable_full_debug:
+            if path_key not in st.session_state or not st.session_state[path_key]:
+                st.session_state[path_key] = create_log_session()
+                # st.toast(f"Log iniciado: {Path(st.session_state[path_key]).name}")
+            
+            c2.info(f"Log ativo: `{Path(st.session_state[path_key]).name}`")
+            return st.session_state[path_key]
+        else:
+            st.session_state[path_key] = None
+            return None

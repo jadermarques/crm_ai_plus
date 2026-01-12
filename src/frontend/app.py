@@ -1,3 +1,24 @@
+"""CRM AI Plus - Aplicação Principal Streamlit.
+
+Este módulo fornece o ponto de entrada principal para a aplicação web CRM AI Plus.
+Trata autenticação de usuários, navegação e roteamento de views.
+
+Attributes:
+    LOG_APP_METRICS: Habilita logging de métricas de performance.
+    AUTO_LOGIN_ENABLED: Habilita auto-login para desenvolvimento.
+    AUTO_LOGIN_USER: Nome de usuário para auto-login.
+
+Functions:
+    main: Ponto de entrada principal da aplicação.
+    render_login_flow: Renderiza o fluxo de autenticação.
+    render_sidebar_navigation: Renderiza o menu lateral.
+    render_placeholder: Renderiza conteúdo placeholder para views não implementadas.
+
+Usage:
+    Execute com Streamlit::
+
+        streamlit run src/frontend/app.py
+"""
 from __future__ import annotations
 
 import os
@@ -20,6 +41,8 @@ from src.frontend.views import modules as modules_view
 from src.frontend.views import applications as applications_view
 from src.frontend.views import permissions as permissions_view
 from src.frontend.views import ia_configs as ia_configs_view
+from src.frontend.views import bot_simulator as bot_simulator_view
+from src.frontend.views import rag_management as rag_management_view
 from src.frontend.services.auth_service import (
     check_credentials,
     create_first_user,
@@ -27,6 +50,8 @@ from src.frontend.services.auth_service import (
     get_user_count,
 )
 from src.frontend.views import chatwoot_params, chatwoot_connection
+from src.frontend.views import int_chatwoot_meta, int_chatwoot_google
+from src.frontend.config.ui_structure import MODULES, PLACEHOLDER_CONTENT, APP_LABELS
 
 st.set_page_config(page_title="CRM AI Plus", layout="wide")
 LOG_APP_METRICS = os.getenv("LOG_APP_METRICS", "").lower() in {"1", "true", "yes", "on"}
@@ -105,298 +130,19 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-MODULES = [
-    {
-        "id": "principal",
-        "label": "Principal",
-        "icon": "📌",
-        "apps": [
-            {"id": "overview", "label": "Visão Geral"},
-        ],
-    },
-    {
-        "id": "bot_studio",
-        "label": "Bot Studio",
-        "icon": "🤖",
-        "apps": [
-            {"id": "bots", "label": "Bots"},
-            {"id": "bot_prompts", "label": "Prompts"},
-            {"id": "bot_configs", "label": "Configurações"},
-            {"id": "bot_monitoring", "label": "Monitoramento"},
-            {"id": "bot_tests", "label": "Testes"},
-        ],
-    },
-    {
-        "id": "ai_agents",
-        "label": "Agentes de IA",
-        "icon": "🧠",
-        "apps": [
-            {"id": "agents", "label": "Agentes"},
-            {"id": "agent_prompts", "label": "Prompts"},
-            {"id": "agent_configs", "label": "Configurações de agentes"},
-            {"id": "agent_monitoring", "label": "Monitoramento de agentes"},
-            {"id": "agent_tests", "label": "Testes de agentes"},
-        ],
-    },
-    {
-        "id": "ia_rag",
-        "label": "IA e RAG",
-        "icon": "📚",
-        "apps": [
-            {"id": "rag_management", "label": "Gerenciamento RAG"},
-            {"id": "rag_configs", "label": "Configurações RAG"},
-            {"id": "ia_management", "label": "Gerenciamento de IA"},
-            {"id": "ia_configs", "label": "Configurações de IA"},
-        ],
-    },
-    {
-        "id": "dashboards",
-        "label": "Dashboard / Relatórios",
-        "icon": "📊",
-        "apps": [
-            {"id": "dash_main", "label": "Principal"},
-            {"id": "dash_analysis", "label": "Análises"},
-            {"id": "dash_reports", "label": "Relatórios"},
-        ],
-    },
-    {
-        "id": "management",
-        "label": "Gestão",
-        "icon": "🛠️",
-        "apps": [
-            {"id": "users", "label": "Usuários"},
-            {"id": "modules", "label": "Módulos"},
-            {"id": "apps", "label": "Aplicações"},
-            {"id": "permissions", "label": "Permissões"},
-            {"id": "prompt_management", "label": "Gestão de Prompts"},
-            {"id": "chatwoot_params", "label": "Parâmetros Chatwoot"},
-            {"id": "backup_logs", "label": "Backup/Logs"},
-            {"id": "system_configs", "label": "Configurações do Sistema"},
-        ],
-    },
-    {
-        "id": "tests",
-        "label": "Testes",
-        "icon": "🧪",
-        "apps": [
-            {"id": "tests_management", "label": "Gerenciamento dos Testes"},
-            {"id": "tests_execution", "label": "Execução de Testes"},
-        ],
-    },
-    {
-        "id": "external_connections",
-        "label": "Conexões Externas",
-        "icon": "🔌",
-        "apps": [
-            {"id": "chatwoot_connection", "label": "Conexão Chatwoot"},
-        ],
-    },
-]
-
-APP_LABELS = {app["id"]: app["label"] for module in MODULES for app in module["apps"]}
-
-PLACEHOLDER_CONTENT = {
-    "bots": {
-        "desc": "Em breve: lista de bots, status e últimas execuções.",
-        "sections": [
-            {"title": "Bots", "body": "- Bot A (ativo)\n- Bot B (em configuração)\n- Bot C (pausado)"},
-            {"title": "Ações", "body": "Criar bot, editar fluxos, clonar bot."},
-        ],
-    },
-    "bot_prompts": {
-        "desc": "Catálogo de prompts dos bots com versões Dev/Prod.",
-        "sections": [
-            {"title": "Sugestões", "body": "Revise prompts críticos, teste antes de publicar."},
-            {"title": "Ações", "body": "Criar prompt, duplicar, publicar para produção."},
-        ],
-    },
-    "bot_configs": {
-        "desc": "Configurações do Bot Studio: integrações e parâmetros.",
-        "sections": [
-            {"title": "APIs e Tokens", "body": "Tokens de Chatwoot/LLM, webhooks, variáveis globais."},
-            {"title": "Eventos", "body": "Assinaturas de eventos, retentativa e limites de taxa."},
-        ],
-    },
-    "bot_monitoring": {
-        "desc": "Monitoramento de bots: métricas e logs.",
-        "sections": [
-            {"title": "Métricas", "body": "Execuções hoje, taxa de erro, latência média."},
-            {"title": "Timeline", "body": "Últimos eventos e alertas (mock)."},
-        ],
-    },
-    "bot_tests": {
-        "desc": "Testes de bots com mensagens de exemplo.",
-        "sections": [
-            {"title": "Runner", "body": "Envie mensagem de teste para um bot e veja a resposta."},
-            {"title": "Histórico", "body": "Resultados recentes com status e duração."},
-        ],
-    },
-    "agents": {
-        "desc": "Lista de agentes de IA e seus papéis.",
-        "sections": [
-            {"title": "Agentes", "body": "Agente A (suporte), Agente B (vendas), Agente C (triagem)."},
-            {"title": "Ações", "body": "Criar agente, editar habilidades, ativar/desativar."},
-        ],
-    },
-    "agent_prompts": {
-        "desc": "Prompts específicos de agentes, com versões e tags.",
-        "sections": [
-            {"title": "Gestão", "body": "Prompts por agente, ambientes Dev/Prod, histórico de versões."},
-        ],
-    },
-    "agent_configs": {
-        "desc": "Configurações de agentes: modelo, temperatura e ferramentas.",
-        "sections": [
-            {"title": "Modelo e Temperatura", "body": "Seleção de modelo, temperatura, max tokens."},
-            {"title": "Ferramentas", "body": "Habilitar/Desabilitar integrações e ações permitidas."},
-        ],
-    },
-    "agent_monitoring": {
-        "desc": "Monitoramento de agentes: uso e sucesso.",
-        "sections": [
-            {"title": "Métricas", "body": "Interações hoje, latência, taxa de sucesso."},
-            {"title": "Logs", "body": "Eventos recentes com status (mock)."},
-        ],
-    },
-    "agent_tests": {
-        "desc": "Testes de agentes com cenários pré-definidos.",
-        "sections": [
-            {"title": "Cenários", "body": "Cenário de saudação, roteamento, resposta curta/longa."},
-            {"title": "Resultados", "body": "Tabela de execuções com status e duração."},
-        ],
-    },
-    "rag_management": {
-        "desc": "Gerenciamento de coleções RAG.",
-        "sections": [
-            {"title": "Coleções", "body": "Coleção A (10k docs), Coleção B (2k docs), última indexação."},
-            {"title": "Ações", "body": "Indexar, pausar, remover coleção (placeholder)."},
-        ],
-    },
-    "rag_configs": {
-        "desc": "Configurações RAG: chunk, overlap e embeddings.",
-        "sections": [
-            {"title": "Parâmetros", "body": "Chunk size, overlap, provedor de embeddings."},
-            {"title": "Qualidade", "body": "Notas sobre ajustes finos de recall/precisão (em breve)."},
-        ],
-    },
-    "ia_management": {
-        "desc": "Gerenciamento geral de IA (modelos e políticas).",
-        "sections": [
-            {"title": "Modelos ativos", "body": "Modelo principal, fallback, limites de custo (placeholder)."},
-        ],
-    },
-    "ia_configs": {
-        "desc": "Configurações de IA: chaves e limites.",
-        "sections": [
-            {"title": "Chaves", "body": "OpenAI/LLM: armazenar via .env; aqui apenas exibição segura (mock)."},
-            {"title": "Limites", "body": "Rate limits, budgets e políticas (placeholder)."},
-        ],
-    },
-    "dash_main": {
-        "desc": "Visão geral de KPIs.",
-        "sections": [
-            {"title": "KPIs", "body": "Mensagens hoje, bots ativos, latência média (valores mock)."},
-        ],
-    },
-    "dash_analysis": {
-        "desc": "Análises e gráficos.",
-        "sections": [
-            {"title": "Insights", "body": "Gráficos e análises em breve (use line_chart com dados mock se necessário)."},
-        ],
-    },
-    "dash_reports": {
-        "desc": "Relatórios e exportações.",
-        "sections": [
-            {"title": "Relatórios", "body": "Listagem de relatórios e agendamentos (mock)."},
-        ],
-    },
-    "users": {
-        "desc": "Gestão de usuários.",
-        "sections": [
-            {"title": "Lista", "body": "Usuários com e-mail, papel e status (placeholder)."},
-            {"title": "Ações", "body": "Convidar, editar papel, ativar/desativar."},
-        ],
-    },
-    "modules": {
-        "desc": "Gestão de módulos.",
-        "sections": [
-            {"title": "Módulos", "body": "Ativar/desativar módulos disponíveis (mock)."},
-        ],
-    },
-    "apps": {
-        "desc": "Gestão de aplicações.",
-        "sections": [
-            {"title": "Aplicações", "body": "Listagem de apps e status (placeholder)."},
-        ],
-    },
-    "permissions": {
-        "desc": "Permissões e papéis.",
-        "sections": [
-            {"title": "Papéis", "body": "Matriz papel x módulo com switches (mock)."},
-        ],
-    },
-    "prompt_management": {
-        "desc": "Gestão de prompts globais.",
-        "sections": [
-            {"title": "Prompts", "body": "Lista com tags e versões (placeholder)."},
-        ],
-    },
-    "chatwoot_params": {
-        "desc": "Configuração de parâmetros do Chatwoot.",
-        "sections": [
-            {"title": "Credenciais", "body": "Base URL, account_id, tokens (somente leitura; editar via .env)."},
-            {"title": "Webhook", "body": "Status do webhook e URL configurada (placeholder)."},
-            {"title": "Teste de conexão", "body": "Em breve: botão para pingar Chatwoot e validar token."},
-        ],
-    },
-    "backup_logs": {
-        "desc": "Backup e logs do sistema.",
-        "sections": [
-            {"title": "Backups", "body": "Exportar/baixar (desabilitado)."},
-            {"title": "Logs", "body": "Links para logs recentes (mock)."},
-        ],
-    },
-    "system_configs": {
-        "desc": "Configurações do sistema.",
-        "sections": [
-            {"title": "Ambiente", "body": "URLs e chaves (somente leitura, vindo do .env)."},
-        ],
-    },
-    "tests_management": {
-        "desc": "Gerenciamento dos testes.",
-        "sections": [
-            {"title": "Suites", "body": "Unitários, E2E; status do último run (placeholder)."},
-            {"title": "Logs", "body": "Acesso aos logs em logs/tests/."},
-        ],
-    },
-    "tests_execution": {
-        "desc": "Execução de testes.",
-        "sections": [
-            {"title": "Comandos", "body": "`pytest -q` para unitários; `RUN_E2E=1 pytest -q tests/e2e` para E2E."},
-            {"title": "Estado", "body": "Botões desabilitados; use terminal para rodar."},
-        ],
-    },
-    "chatwoot_connection": {
-        "desc": "Configuração e status da conexão com o Chatwoot.",
-        "sections": [
-            {"title": "Status", "body": "Em breve: ping ao Chatwoot, verificação de tokens e webhook."},
-            {"title": "Ações", "body": "Configurar base URL, token e account_id; testar envio de mensagem."},
-        ],
-    },
-}
 
 if "active_app" not in st.session_state:
     st.session_state.active_app = MODULES[0]["apps"][0]["id"]
 
+
 def render_sidebar_navigation() -> None:
+    """Renderiza o menu de navegação lateral.
+
+    Exibe seções expansíveis para cada módulo com botões para
+    cada aplicação. Atualiza o estado da sessão quando uma app é selecionada.
+    """
     st.write("### Workspace")
     for module in MODULES:
-        options = [app["id"] for app in module["apps"]]
-        default_index = (
-            options.index(st.session_state.active_app)
-            if st.session_state.active_app in options
-            else 0
-        )
         with st.expander(f"{module['icon']} {module['label']}", expanded=False):
             for app in module["apps"]:
                 is_active = st.session_state.active_app == app["id"]
@@ -411,6 +157,11 @@ def render_sidebar_navigation() -> None:
 
 
 def render_placeholder(app_id: str) -> None:
+    """Renderiza conteúdo placeholder para views não implementadas.
+
+    Args:
+        app_id: ID da aplicação para renderizar placeholder.
+    """
     label = APP_LABELS.get(app_id, "Em breve")
     content = PLACEHOLDER_CONTENT.get(app_id)
     st.header(label)
@@ -425,9 +176,102 @@ def render_placeholder(app_id: str) -> None:
         st.write(section.get("body", "Em breve."))
 
 
+
+def _validate_first_user_form(
+    username: str, full_name: str, email: str, password: str, confirm_password: str
+) -> str | None:
+    """Valida campos do formulário de registro do primeiro usuário.
+
+    Args:
+        username: Nome de usuário (3-20 caracteres, será convertido para minúsculas).
+        full_name: Nome completo do usuário.
+        email: Endereço de e-mail.
+        password: Senha (mínimo 6 caracteres).
+        confirm_password: Confirmação da senha.
+
+    Returns:
+        Mensagem de erro se a validação falhar, None se válido.
+    """
+    normalized_username = username.strip().lower()
+    if len(normalized_username) < 3 or len(normalized_username) > 20:
+        return "Usuário deve ter entre 3 e 20 caracteres (minúsculas)."
+    if len(password) < 6:
+        return "A senha deve ter pelo menos 6 caracteres."
+    if not normalized_username:
+        return "Informe um usuário válido."
+    if not full_name.strip():
+        return "Informe o nome completo."
+    if not email.strip():
+        return "Informe um e-mail válido."
+    if not _EMAIL_REGEX.match(email.strip().lower()):
+        return "Informe um e-mail válido."
+    if password != confirm_password:
+        return "As senhas não conferem."
+    return None
+
+
+def _render_first_user_form() -> None:
+    """Renderiza e trata o formulário de criação do primeiro usuário.
+
+    Exibe um formulário para criar o usuário administrador inicial quando
+    não existem usuários no sistema. Após envio bem-sucedido, cria o
+    usuário e o autentica.
+    """
+    st.caption("Crie o primeiro usuário para acessar o workspace.")
+    with st.form("create_first_user"):
+        username = st.text_input("Usuário (3 a 20 caracteres, será convertido para minúsculas)")
+        full_name = st.text_input("Nome completo")
+        email = st.text_input("E-mail")
+        password = st.text_input("Senha (mínimo 6 caracteres)", type="password")
+        confirm_password = st.text_input("Confirmar senha", type="password")
+        submitted = st.form_submit_button("Criar usuário e entrar")
+        if submitted:
+            error = _validate_first_user_form(username, full_name, email, password, confirm_password)
+            if error:
+                st.error(error)
+            else:
+                try:
+                    create_first_user(
+                        username=username.strip().lower(),
+                        password=password,
+                        full_name=full_name,
+                        email=email,
+                    )
+                    st.session_state.authenticated_user = username.strip()
+                    st.session_state.active_app = "overview"
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Erro ao criar usuário: {exc}")
+
+
+def _render_login_form() -> None:
+    """Renderiza e trata o formulário de login.
+
+    Exibe campos de usuário e senha. Após autenticação bem-sucedida,
+    armazena o usuário no estado da sessão e redireciona para a página inicial.
+    """
+    with st.form("login_form"):
+        username = st.text_input("Usuário")
+        password = st.text_input("Senha", type="password")
+        submitted = st.form_submit_button("Entrar")
+        if submitted:
+            ok, user = check_credentials(username.strip().lower(), password)
+            if ok:
+                st.session_state.authenticated_user = user
+                st.session_state.active_app = "overview"
+                st.rerun()
+            st.error("Usuário ou senha inválidos ou usuário desabilitado.")
+
+
 def render_login_flow() -> bool:
-    """Returns True if authenticated."""
-    # Ensure auth table exists
+    """Renderiza o fluxo completo de login/registro.
+
+    Se não existirem usuários, mostra o formulário de registro do primeiro usuário.
+    Caso contrário, mostra o formulário de login.
+
+    Returns:
+        True se o usuário está autenticado, False caso contrário.
+    """
     ensure_setup()
     user_count = get_user_count()
 
@@ -435,59 +279,38 @@ def render_login_flow() -> bool:
     with login_area:
         st.header("CRM AI Plus - Login")
         if user_count == 0:
-            st.caption("Crie o primeiro usuário para acessar o workspace.")
-            with st.form("create_first_user"):
-                username = st.text_input("Usuário (3 a 20 caracteres, será convertido para minúsculas)")
-                full_name = st.text_input("Nome completo")
-                email = st.text_input("E-mail")
-                password = st.text_input("Senha (mínimo 6 caracteres)", type="password")
-                confirm_password = st.text_input("Confirmar senha", type="password")
-                submitted = st.form_submit_button("Criar usuário e entrar")
-                if submitted:
-                    normalized_username = username.strip().lower()
-                    if len(normalized_username) < 3 or len(normalized_username) > 20:
-                        st.error("Usuário deve ter entre 3 e 20 caracteres (minúsculas).")
-                    elif len(password) < 6:
-                        st.error("A senha deve ter pelo menos 6 caracteres.")
-                    elif not normalized_username:
-                        st.error("Informe um usuário válido.")
-                    elif not full_name.strip():
-                        st.error("Informe o nome completo.")
-                    elif not email.strip():
-                        st.error("Informe um e-mail válido.")
-                    elif not _EMAIL_REGEX.match(email.strip().lower()):
-                        st.error("Informe um e-mail válido.")
-                    elif password != confirm_password:
-                        st.error("As senhas não conferem.")
-                    else:
-                        try:
-                            create_first_user(
-                                username=normalized_username,
-                                password=password,
-                                full_name=full_name,
-                                email=email,
-                            )
-                            st.session_state.authenticated_user = username.strip()
-                            st.session_state.active_app = "overview"
-                            st.rerun()
-                        except Exception as exc:
-                            st.error(f"Erro ao criar usuário: {exc}")
+            _render_first_user_form()
         else:
-            with st.form("login_form"):
-                username = st.text_input("Usuário")
-                password = st.text_input("Senha", type="password")
-                submitted = st.form_submit_button("Entrar")
-                if submitted:
-                    ok, user = check_credentials(username.strip().lower(), password)
-                    if ok:
-                        st.session_state.authenticated_user = user
-                        st.session_state.active_app = "overview"
-                        st.rerun()
-                    st.error("Usuário ou senha inválidos ou usuário desabilitado.")
+            _render_login_form()
     return False
 
 
+# View dispatch dictionary for reducing complexity in main()
+_VIEW_DISPATCH = {
+    "overview": overview.render,
+    "users": users.render,
+    "agents": agents_view.render,
+    "bots": bots_view.render,
+    "bot_tests": bot_tests_view.render,
+    "modules": modules_view.render,
+    "apps": applications_view.render,
+    "permissions": permissions_view.render,
+    "ia_configs": ia_configs_view.render,
+    "rag_management": rag_management_view.render,
+    "bot_simulator": bot_simulator_view.render,
+    "chatwoot_params": chatwoot_params.render,
+    "chatwoot_connection": chatwoot_connection.render,
+    "int_chatwoot_meta": int_chatwoot_meta.render,
+    "int_chatwoot_google": int_chatwoot_google.render,
+}
+
+
 def main() -> None:
+    """Ponto de entrada principal da aplicação.
+
+    Trata inicialização do estado de autenticação, auto-login para desenvolvimento,
+    renderização da sidebar e roteamento de views baseado na aplicação ativa.
+    """
     if "authenticated_user" not in st.session_state:
         st.session_state.authenticated_user = None
 
@@ -508,7 +331,6 @@ def main() -> None:
         st.markdown("---")
         render_sidebar_navigation()
 
-    # Garante que após login a página ativa seja a visão geral
     if "active_app" not in st.session_state or st.session_state.active_app not in APP_LABELS:
         st.session_state.active_app = "overview"
 
@@ -516,30 +338,8 @@ def main() -> None:
     label = APP_LABELS.get(active, active)
     start = time.perf_counter()
     try:
-        if active == "overview":
-            overview.render()
-        elif active == "users":
-            users.render()
-        elif active == "agents":
-            agents_view.render()
-        elif active == "bots":
-            bots_view.render()
-        elif active == "bot_tests":
-            bot_tests_view.render()
-        elif active == "modules":
-            modules_view.render()
-        elif active == "apps":
-            applications_view.render()
-        elif active == "permissions":
-            permissions_view.render()
-        elif active == "ia_configs":
-            ia_configs_view.render()
-        elif active == "chatwoot_params":
-            chatwoot_params.render()
-        elif active == "chatwoot_connection":
-            chatwoot_connection.render()
-        else:
-            render_placeholder(active)
+        render_fn = _VIEW_DISPATCH.get(active, lambda: render_placeholder(active))
+        render_fn()
         if LOG_APP_METRICS:
             elapsed_ms = (time.perf_counter() - start) * 1000
             print(f"[APP] Renderizou '{label}' em {elapsed_ms:.2f} ms")
@@ -549,7 +349,4 @@ def main() -> None:
         raise
 
 
-if __name__ == "__main__":
-    main()
-else:
-    main()
+main()

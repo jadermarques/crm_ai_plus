@@ -1,3 +1,32 @@
+"""Módulo de Autenticação - Gerenciamento de Usuários e Autenticação.
+
+Este módulo fornece funções para autenticação de usuários, incluindo
+verificação de credenciais, criação/atualização de usuários e gerenciamento
+de senhas. Usa PBKDF2-SHA256 para hash seguro de senhas.
+
+Security:
+    - Senhas são hasheadas usando PBKDF2-SHA256
+    - Nomes de usuário são normalizados para minúsculas
+    - Validação de e-mail é realizada
+
+Functions:
+    ensure_users_table: Cria tabela no banco se não existir.
+    list_users: Lista todos os usuários.
+    create_user: Cria um novo usuário.
+    update_user: Atualiza um usuário existente.
+    verify_credentials: Verifica credenciais de login.
+    update_password: Atualiza senha do usuário.
+    set_user_status: Ativa/desativa usuário.
+
+Roles:
+    ADMIN: Acesso total ao sistema.
+    USER: Acesso de usuário padrão.
+
+Example:
+    >>> from src.core.auth import verify_credentials, create_user
+    >>> await create_user("admin", "password123", full_name="Admin", email="admin@test.com")
+    >>> is_valid, user = await verify_credentials("admin", "password123")
+"""
 from __future__ import annotations
 
 import asyncio
@@ -8,7 +37,9 @@ from passlib.hash import pbkdf2_sha256
 from sqlalchemy import Boolean, Column, DateTime, Integer, MetaData, String, func, or_, select, text
 from sqlalchemy.dialects.postgresql import VARCHAR
 
+from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.database import get_engine, get_sessionmaker
+
 from src.core.db_schema import ensure_audit_columns
 
 metadata = MetaData()
@@ -71,14 +102,22 @@ async def ensure_users_table() -> None:
     await ensure_audit_columns("users")
 
 
-async def count_users(only_active: bool = True) -> int:
+async def count_users(
+    only_active: bool = True, session: AsyncSession | None = None
+) -> int:
+    if session:
+        return await _count_users_impl(session, only_active)
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        query = select(func.count()).select_from(users)
-        if only_active and "is_active" in users.c:
-            query = query.where(users.c.is_active.is_(True))
-        result = await session.execute(query)
-        return int(result.scalar_one())
+        return await _count_users_impl(session, only_active)
+
+
+async def _count_users_impl(session: AsyncSession, only_active: bool) -> int:
+    query = select(func.count()).select_from(users)
+    if only_active and "is_active" in users.c:
+        query = query.where(users.c.is_active.is_(True))
+    result = await session.execute(query)
+    return int(result.scalar_one())
 
 
 def _serialize_user(row: Any) -> dict[str, Any]:
@@ -130,18 +169,34 @@ def _validate_role(role: str) -> str:
     return role_clean
 
 
-async def list_users(include_inactive: bool = True) -> list[dict[str, Any]]:
+async def list_users(
+    include_inactive: bool = True, session: AsyncSession | None = None
+) -> list[dict[str, Any]]:
+    if session:
+        return await _list_users_impl(session, include_inactive)
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        query = select(users).order_by(users.c.username)
-        if not include_inactive and "is_active" in users.c:
-            query = query.where(users.c.is_active.is_(True))
-        result = await session.execute(query)
-        return [_serialize_user(row) for row in result.mappings().all()]
+        return await _list_users_impl(session, include_inactive)
+
+
+async def _list_users_impl(
+    session: AsyncSession, include_inactive: bool
+) -> list[dict[str, Any]]:
+    query = select(users).order_by(users.c.username)
+    if not include_inactive and "is_active" in users.c:
+        query = query.where(users.c.is_active.is_(True))
+    result = await session.execute(query)
+    return [_serialize_user(row) for row in result.mappings().all()]
 
 
 async def create_user(
-    username: str, password: str, *, full_name: str, email: str, role: str = "USER"
+    username: str,
+    password: str,
+    *,
+    full_name: str,
+    email: str,
+    role: str = "USER",
+    session: AsyncSession | None = None,
 ) -> None:
     _validate_password(password)
     username = _normalize_username(username)
@@ -155,26 +210,45 @@ async def create_user(
     if not email:
         raise ValueError("Informe um e-mail válido.")
 
+    if session:
+        return await _create_user_impl(
+            session, username, password, full_name, email, role_clean
+        )
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        exists = await session.execute(
-            select(users.c.id).where(or_(users.c.username == username, users.c.email == email))
-        )
-        if exists.first():
-            raise ValueError("Usuário ou e-mail já existe.")
-
-        password_hash = pbkdf2_sha256.hash(password)
-        await session.execute(
-            users.insert().values(
-                username=username,
-                full_name=full_name,
-                email=email,
-                password_hash=password_hash,
-                role=role_clean,
-                is_active=True,
-            )
+        await _create_user_impl(
+            session, username, password, full_name, email, role_clean
         )
         await session.commit()
+
+
+async def _create_user_impl(
+    session: AsyncSession,
+    username: str,
+    password: str,
+    full_name: str,
+    email: str,
+    role: str,
+) -> None:
+    exists = await session.execute(
+        select(users.c.id).where(
+            or_(users.c.username == username, users.c.email == email)
+        )
+    )
+    if exists.first():
+        raise ValueError("Usuário ou e-mail já existe.")
+
+    password_hash = pbkdf2_sha256.hash(password)
+    await session.execute(
+        users.insert().values(
+            username=username,
+            full_name=full_name,
+            email=email,
+            password_hash=password_hash,
+            role=role,
+            is_active=True,
+        )
+    )
 
 
 async def update_user(
@@ -186,6 +260,7 @@ async def update_user(
     password: str | None = None,
     is_active: bool | None = None,
     role: str | None = None,
+    session: AsyncSession | None = None,
 ) -> None:
     username = _normalize_username(username)
     email = _normalize_email(email)
@@ -200,16 +275,50 @@ async def update_user(
     if not email:
         raise ValueError("Informe um e-mail válido.")
 
+    if session:
+        return await _update_user_impl(
+            session,
+            user_id,
+            username,
+            full_name,
+            email,
+            password,
+            is_active,
+            role_clean,
+        )
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        existing = await session.execute(
-            select(users.c.id).where(
-                or_(users.c.username == username, users.c.email == email),
-                users.c.id != user_id,
-            )
+        await _update_user_impl(
+            session,
+            user_id,
+            username,
+            full_name,
+            email,
+            password,
+            is_active,
+            role_clean,
         )
-        if existing.first():
-            raise ValueError("Usuário ou e-mail já existe.")
+        await session.commit()
+
+
+async def _update_user_impl(
+    session: AsyncSession,
+    user_id: int,
+    username: str,
+    full_name: str,
+    email: str,
+    password: str | None,
+    is_active: bool | None,
+    role: str | None,
+) -> None:
+    existing = await session.execute(
+        select(users.c.id).where(
+            or_(users.c.username == username, users.c.email == email),
+            users.c.id != user_id,
+        )
+    )
+    if existing.first():
+        raise ValueError("Usuário ou e-mail já existe.")
 
     values: dict[str, Any] = {
         "username": username,
@@ -220,13 +329,14 @@ async def update_user(
         values["password_hash"] = pbkdf2_sha256.hash(password)
     if is_active is not None and "is_active" in users.c:
         values["is_active"] = is_active
-    if role_clean is not None:
-        values["role"] = role_clean
+    if role is not None:
+        values["role"] = role
 
-    result = await session.execute(users.update().where(users.c.id == user_id).values(**values))
+    result = await session.execute(
+        users.update().where(users.c.id == user_id).values(**values)
+    )
     if result.rowcount == 0:
         raise ValueError("Usuário não encontrado.")
-    await session.commit()
 
 
 async def update_password(username: str, password: str) -> None:

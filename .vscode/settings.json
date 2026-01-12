@@ -4,5 +4,6 @@
     "sonarlint.connectedMode.project": {
         "connectionId": "",
         "projectKey": ""
-    }
+    },
+    "remote.autoForwardPortsFallback": 0
 }

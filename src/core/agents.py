@@ -1,3 +1,26 @@
+"""
+Agents Module - Agent CRUD Operations.
+
+This module provides functions for managing AI agents in the database,
+including creation, update, deletion, and listing operations.
+
+Functions:
+    ensure_tables: Create database tables if not exists
+    ensure_default_agents: Create default system agents
+    list_agents: List all agents
+    create_agent: Create a new agent
+    update_agent: Update an existing agent
+    delete_agent: Delete an agent
+
+Example:
+    >>> from src.core.agents import list_agents, create_agent
+    >>> agents = await list_agents()
+    >>> new_agent = await create_agent(
+    ...     nome="Novo Agente",
+    ...     system_prompt="Prompt...",
+    ...     model="gpt-4o-mini"
+    ... )
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -33,6 +56,7 @@ from src.core.rag_management import rags
 metadata = rags.metadata
 
 agents = Table(
+
     "agents",
     metadata,
     Column("id", Integer, primary_key=True),
@@ -141,7 +165,9 @@ async def ensure_tables() -> None:
 async def _backfill_agent_roles() -> None:
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        result = await session.execute(select(agents.c.id, agents.c.nome, agents.c.papel))
+        result = await session.execute(
+            select(agents.c.id, agents.c.nome, agents.c.papel)
+        )
         updates: list[dict[str, Any]] = []
         for row in result.mappings().all():
             if (row.get("papel") or "").strip():
@@ -151,9 +177,14 @@ async def _backfill_agent_roles() -> None:
                 continue
             updates.append({"id": row["id"], "papel": role.value})
 
+        # Otimizacao: Se houver muitos updates, usar executemany ou similar.
+        # Como depende de logica python por linha, mantemos loop de updates
+        # mas compartilham a mesma transacao.
         for update in updates:
             await session.execute(
-                agents.update().where(agents.c.id == update["id"]).values(papel=update["papel"])
+                agents.update()
+                .where(agents.c.id == update["id"])
+                .values(papel=update["papel"])
             )
         if updates:
             await session.commit()
@@ -231,6 +262,7 @@ async def list_agents(include_inactive: bool = True) -> list[dict[str, Any]]:
                 rags.c.nome.label("rag_nome"),
                 rags.c.rag_id.label("rag_identificador"),
                 rags.c.provedor_rag.label("rag_provedor"),
+                rags.c.data_hora_alteracao.label("rag_last_sync"),
             )
             .select_from(j)
             .order_by(agents.c.nome)

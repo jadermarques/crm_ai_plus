@@ -1,3 +1,30 @@
+"""
+IA Settings Module - AI Provider and Model Management.
+
+This module provides functions for managing AI providers (e.g., OpenAI, Google)
+and their associated models. Used to configure and test which AI models are
+available for use in the system.
+
+Tables:
+    ia_providers: AI provider configurations (OpenAI, Google, etc.)
+    ia_models: Available models per provider with cost information
+
+Functions:
+    ensure_tables: Create database tables if not exists
+    list_providers: List all AI providers
+    create_provider: Create a new provider
+    update_provider: Update a provider
+    list_models: List all models
+    create_model: Create a new model
+    update_model: Update a model
+    delete_model: Delete a model
+    test_model_connection: Test if model is reachable
+
+Example:
+    >>> from src.core.ia_settings import list_models, create_model
+    >>> models = await list_models()
+    >>> await create_model(provider_id=1, name="gpt-4o-mini")
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -23,6 +50,8 @@ from pydantic_ai import Agent
 from src.core.config import get_settings
 from src.core.database import get_engine, get_sessionmaker
 from src.core.db_schema import ensure_audit_columns
+from src.core.debug_logger import log_llm_interaction
+
 
 metadata = MetaData()
 
@@ -370,4 +399,15 @@ async def test_model_connection(provider_name: str, model_name: str) -> tuple[bo
 
     if not (result.data or "").strip():
         return False, "Conexao estabelecida, mas sem resposta valida."
+
+    # LOG: Global History for Connection Test
+    log_llm_interaction(
+        agent_name="System_ModelTester",
+        model=model_name,
+        system_prompt="(System Connectivity Test)",
+        user_prompt="Teste de conexao.",
+        response=str(result.data),
+        usage={"input": result.usage().request_tokens, "output": result.usage().response_tokens, "total": result.usage().total_tokens} if hasattr(result, "usage") else None
+    )
+
     return True, "Conexao realizada com sucesso."
